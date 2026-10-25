@@ -199,3 +199,34 @@ def test_the_repository_itself_is_clean():
     """The gate must pass on the repository it guards."""
     code, out = scan(REPO_ROOT)
     assert code == 0, out
+
+
+def test_a_templated_value_is_not_a_secret(repo: Path):
+    """A value wrapped in a template is a placeholder, whatever is inside.
+
+    The gate used to fail on the repository it guards: the README's own
+    `postgresql://<runtime_role>:<password>@` example and the
+    installer's own `{runtime_pw}` f-string were both read as leaked
+    passwords. A real credential is a bare value, never a template.
+    """
+    (repo / "README.md").write_text(
+        "postgresql://<runtime_role>:<password>@localhost/harness\n")
+    (repo / "install.py").write_text(
+        'DATABASE_URL = f"postgresql://{role}:{runtime_pw}@host/db"\n')
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t",
+        "commit", "-qm", "docs")
+    code, out = scan(repo)
+    assert code == 0, out
+
+
+def test_a_bare_value_in_a_connection_string_is_still_a_secret(repo: Path):
+    """The relaxation must not open a hole: a bare password is a finding."""
+    (repo / "leak.txt").write_text(
+        "postgresql://harness_app:Sup3rSecretBareValue@db/harness\n")
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t",
+        "commit", "-qm", "oops")
+    code, out = scan(repo)
+    assert code == 1, out
+    assert "password in a connection string" in out
