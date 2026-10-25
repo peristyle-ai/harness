@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The whole history, not a shallow clone: a secret that was
           # committed and then deleted is still in the history, and
@@ -22,7 +22,7 @@ jobs:
           # scanning looks at the same thing.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -59,9 +59,9 @@ jobs:
       HARNESS_INTERNAL_TOKEN: ci-not-a-real-token
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
