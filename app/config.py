@@ -365,7 +365,7 @@ def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
     llm_per_agent_raw = llm.get("per_agent") or {}
     llm_per_agent = {name: _make_llm(cfg) for name, cfg in llm_per_agent_raw.items()}
 
-    return AppConfig(
+    cfg = AppConfig(
         app=_App(
             name=a["name"],
             bind=a["bind"],
@@ -466,3 +466,10 @@ def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
             max_bytes=int(up.get("max_bytes") or 10 * 1024 * 1024),
         ),
     )
+    # The directory the config file is in. app/extensions.py resolves a
+    # relative pie_root against it, so the agent's identity directory is
+    # found next to the config -- not next to whatever directory the
+    # service happened to be started in. The dataclass is frozen, so this
+    # needs object.__setattr__.
+    object.__setattr__(cfg, "_config_dir", config_path.parent.resolve())
+    return cfg
