@@ -34,6 +34,7 @@ on:
   push:
     branches:
       - 'agent/**'
+      - 'fix/**'
 
 permissions:
   contents: read
@@ -70,7 +71,10 @@ jobs:
 
           # gh pr create refuses if a pull request already exists for
           # the branch -- update it instead of failing the workflow.
-          number="$(gh pr list --head "$BRANCH" --base "$BASE" \
+          # --state open: a CLOSED pull request for the same branch must
+          # not be found here, or the workflow would try to edit a closed
+          # one instead of opening a fresh one.
+          number="$(gh pr list --head "$BRANCH" --base "$BASE" --state open \
                       --json number --jq '.[0].number // empty')"
           if [ -n "$number" ]; then
             echo "updating pull request #$number"
