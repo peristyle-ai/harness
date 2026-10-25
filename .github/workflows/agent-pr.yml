@@ -35,6 +35,8 @@ on:
     branches:
       - 'agent/**'
       - 'fix/**'
+  # So the pull request can be opened (or re-opened) on demand.
+  workflow_dispatch:
 
 permissions:
   contents: read
