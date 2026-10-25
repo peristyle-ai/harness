@@ -43,16 +43,16 @@ from app.paths import LOG_DIR
 TOOL = {
     "name": "sql_query",
     "description": (
-        "Run a read-only SQL query against the 'harness' or "
-        "'peristyle' database and return the result rows. Only "
+        "Run a read-only SQL query against the install's own "
+        "database and return the result rows. Only "
         "SELECT (and EXPLAIN) statements are allowed — INSERT, "
         "UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE, GRANT, "
         "REVOKE, COPY, VACUUM, REINDEX, CLUSTER, LOCK, CALL, DO "
         "are all rejected. The query must be a single statement "
         "(no semicolons in the middle). 30s statement timeout, "
         "1000 row cap, 50KB response cap. Use this to inspect "
-        "memory chunks, conversation history, the peristyle user "
-        "table, etc. Every call is logged to "
+        "memory chunks, conversation history, the user table, etc. "
+        "Every call is logged to "
         f"the audit log ({LOG_DIR}/tool_audit.jsonl) with the "
         "full query, row count, and timing."
     ),

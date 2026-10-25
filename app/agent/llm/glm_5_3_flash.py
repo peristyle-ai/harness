@@ -11,8 +11,9 @@ Per the z.ai / bigmodel.cn API:
 - 11 models available in the catalog as of 2026-10-19; glm-5.3-flash is
   the "fast" tier (higher throughput, lower latency, lower cost vs glm-5.3 base)
 
-Provisioned 2026-10-19 for the clawbie z.ai test. Used as a per-agent
-adapter — clawbie gets glm-5.3-flash, wisp + evie stay on minimax_m3.
+Provisioned 2026-10-19 for a z.ai model test. Used as a per-agent
+adapter -- one agent gets glm-5.3-flash while the rest stay on
+minimax_m3.
 
 Patterned after kimi_k3 (also OpenAI-compatible). Differences:
 - Different base_url (open.bigmodel.cn vs api.kimi.com)
@@ -64,7 +65,7 @@ class LLM(BaseLLM):
         # Read from config.llm.thinking if present; default None (use API default).
         # Options: dict like {"type": "disabled"} or {"type": "enabled", "budget": N}.
         # Use {"type": "disabled"} to stop the model from spending all output
-        # tokens on extended thinking (was causing turn failures for clawbie
+        # tokens on extended thinking (was causing turn failures for one
         # in Oct 2026 when reading Google Doc URLs).
         self.thinking = getattr(config.llm, "thinking", None)
         self._client = httpx.Client(

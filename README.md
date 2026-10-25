@@ -6,7 +6,7 @@ by process.
 
 An **agent** here is a loop with its own memory, its own tools, its own
 identity files and its own conversation history. The harness gives each agent
-a schema (`wisp`, `evie`, `clawbie`), serves them all from one process on one
+a schema (one per agent), serves them all from one process on one
 port, and lets them share a single users table and a single chat UI.
 
 ```
@@ -42,45 +42,89 @@ browser ──► Flask (one process)
   the full output.
 - **A nightly reverie** that re-reads the agent's own identity files and keeps
   them current.
-- **One install file.** `install/<name>.yaml` says everything that differs
-  about an install; `tools/apply_install_config.py` turns it into a config, an
-  environment and an identity.
+- **One config file.** `config.yaml` holds everything that differs about an
+  install — the agent, the database, the API keys — and it is the only file
+  the app reads. No `.env`, no environment variables to keep in step.
 
 ## Install
+
+The harness installs from a clone plus **one file**: a `config.yaml` that
+holds this install's agent, its database, its API keys and its TLS paths.
+Everything else is the stock repo.
 
 ```bash
 git clone https://github.com/peristyle-ai/harness.git
 cd harness
-pip install -r requirements.txt
 
-cp config.yaml.example config.yaml   # this install's config — never commit it
-chmod 600 config.yaml        # it holds the API keys and the DB password
-$EDITOR config.yaml          # fill in the YOUR_..._HERE values
-bash tools/migrate.sh        # the schema (needs the operator role)
-bash run.sh                  # serve on 127.0.0.1:5010
+# 1. the config. Drop the prepared config.yaml into the clone and lock it
+#    down -- it holds the API keys and the database password.
+cp /path/to/the/config.yaml ./config.yaml
+chmod 600 config.yaml
+
+# 2. the Python environment (the service runs from it)
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# 3. the database, the roles and the extensions -- ONCE, as a superuser.
+#    pgvector's "vector" extension is not a *trusted* extension, so only a
+#    superuser may create it. The role names and passwords are in
+#    config.yaml (db.operator_role, db.operator_password, db.url).
+sudo -u postgres psql -c "CREATE ROLE <operator> LOGIN PASSWORD '<operator password>';"
+sudo -u postgres psql -c "CREATE ROLE <runtime> LOGIN PASSWORD '<runtime password>' NOSUPERUSER NOCREATEDB NOCREATEROLE;"
+sudo -u postgres psql -c "CREATE DATABASE <db> OWNER <operator>;"
+sudo -u postgres psql -d <db> -f schema/extensions.sql
+
+# 4. the schema and the runtime role's grants. Idempotent.
+bash tools/migrate.sh
+
+# 5. the first admin
+.venv/bin/python tools/create_user.py --email you@example.com --password '...' --role admin
+
+# 6. the service
+mkdir -p ~/.config/systemd/user
+cp systemd/harness.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now harness.service
 ```
 
-There is **one** config file. `config.yaml.example` is the tracked
-template — safe values, and `YOUR_..._HERE` where a secret belongs.
-`config.yaml` is your copy of it: not tracked, mode 0600, and the only
-file the app reads. The app refuses to start if it is readable by
-anyone else, if a required value is empty, or if a placeholder is still
-in it.
+Then open `http://127.0.0.1:5010` and sign in.
+
+### The config file
+
+There is **one** config file, and no `.env`. `config.yaml.example` is the
+tracked template — safe values, and `YOUR_..._HERE` where a secret
+belongs. `config.yaml` is your copy of it: not tracked, mode 0600, and the
+only file the app reads. The app **refuses to start** if it is readable by
+anyone else, if a required value is empty, or if a placeholder is still in
+it.
+
+A value that is exactly `${VAR}` is resolved from the process environment —
+the escape hatch for "this value comes from somewhere else" (a systemd
+credential, a container secret, a temporary rollback). A literal that merely
+*contains* `${` is left exactly as it is.
+
+### The schema
 
 `tools/migrate.sh` applies `schema/init.sql` — one file that creates the
 whole schema: the shared public tables (the users table) and the agent's
 schema. It is templated on the agent's schema name, so an agent called
-anything works. It is idempotent: re-running it on a database that already has
-the schema is a no-op.
+anything works, and it is idempotent: re-running it on a database that
+already has the schema is a no-op. It runs as the **operator** role, over
+the unix socket with peer auth — the runtime role has DML rights only and
+cannot create a table.
 
-A full per-install setup — the agent's name, its operator, its schema and its
-embedding provider — can be captured in one file and applied with:
+### The identity is a sysadmin
 
-```bash
-python tools/apply_install_config.py install/<name>.yaml
-```
+`agent_template/` holds the **default agent identity**, and it is a
+**sysadmin**: the operator of the machine. That is deliberate — the first
+agent anyone installs is the one best equipped to set up the plumbing
+(tunnels, DNS, certificates, the database), because those are the things
+that need credentials and judgement.
 
-See [`install/README.md`](./install/README.md).
+The identity files live in `pie/<agent>/identity/` and are read at the start
+of every turn, so the operator can edit them (the `SOUL.md` rules are the
+protected ones) and the change lands on the next turn — no restart. They
+are rendered from `agent_template/` with the agent's name filled in.
 
 ### Embeddings
 
@@ -98,7 +142,7 @@ With a hosted service, give it a key — it is sent as `Authorization: Bearer`:
 ```yaml
 embedding:
   base_url: https://embed.example.com/v1
-  api_key: ${EMBEDDING_API_KEY}
+  api_key: YOUR_EMBEDDING_API_KEY_HERE
 ```
 
 A machine with no GPU can still run the harness: point it at a hosted
@@ -116,16 +160,14 @@ harness/
 │   ├── templates/        the server-rendered pages
 │   ├── auth.py           sessions, password hashing, the API-key path
 │   └── security.py       the security headers and the request filters
-├── agent_template/       the default agent identity (see below)
+├── agent_template/       the default agent identity (the sysadmin one)
 ├── schema/init.sql       the whole schema, in one file (idempotent)
-├── install/              the install-config format and an example
-├── tools/                apply_install_config.py, migrate.sh and the ops scripts
+├── tools/                migrate.sh, create_user.py and the ops scripts
 ├── scripts/              operational + diagnostic scripts (not the test suite)
 ├── tests/                pytest — the test suite
 ├── config.yaml.example   the config template (committed)
 ├── config.yaml           this install's config (not committed, mode 0600)
-├── pyproject.toml        the package metadata and the dependency list
-├── pytest.ini            pytest configuration (testpaths, collection rules)
+├── pyproject.toml        the package metadata, the dependencies, the pytest config
 ├── run.sh                the gunicorn entrypoint
 └── LICENSE               MIT
 ```

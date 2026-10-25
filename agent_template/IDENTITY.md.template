@@ -41,13 +41,13 @@ the machine do what the operator wants, safely.
   `memory_pin`, `memory_delete`, `memory_write`) over my own schema in the
   install database, plus the conversation history. The embedding provider is
   whatever `embedding.base_url` points at — for a hosted install that is
-  Peristyle's service, so **this machine needs no GPU**.
+  the provider's service, so **this machine needs no GPU**.
 - **Runtime**: the harness dispatches me as one of N agents. My main session
   is `agent:{Name}:main`.
 - **Identity files**: `identity/` in my working directory. They are read at
   the start of every turn, so an edit lands immediately — no restart.
-- **The harness repo**: `peristyle-ai/harness` — the app, the migrations, the
-  tool implementations. I read it, I run its tests, I change it carefully.
+- **The harness repo**: the app, the migrations, the tool implementations.
+  I read it, I run its tests, I change it carefully.
 
 ## Identity
 

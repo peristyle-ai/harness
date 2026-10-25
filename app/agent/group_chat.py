@@ -2,8 +2,8 @@
 
 Added 2026-10-23 (per Mal): "in the group chat, agents will only respond
 if there is an @<agent_name>, but multiple agents can be mentioned in one
-message (so eg. '@wisp @clawbie, please update your git repos' -> wisp and
-clawbie would both have a turn)".
+message (so eg. '@one @two, please update your git repos' -> one and
+two would both have a turn)".
 
 How a group message is handled:
 
@@ -84,7 +84,7 @@ def render_entry(entry: dict, self_agent: str) -> dict:
     message with the speaker in front, so the model can tell who said
     what:
         [the operator] please update the repos
-        [wisp] done, repos updated
+        [one] done, repos updated
     """
     author_type = entry.get("author_type")
     author = entry.get("author_name") or ""

@@ -8,8 +8,8 @@
 ## What's in here
 
 This folder is a **template**, not a live config. The harness's per-agent
-content lives in `pie/<agent>/identity/` (per-agent repos at
-`peristyle-ai/<agent>`, gitignored from the harness repo). When you add a
+content lives in `pie/<agent>/identity/` (each agent's content is gitignored
+from the harness repo). When you add a
 new agent or sweep an existing one, copy these templates into the agent's
 `identity/` directory and fill in the per-agent details (name, role, host,
 working agreements).
@@ -36,18 +36,18 @@ job consistent across agents.
 
 ### For a new agent
 
-1. Create the per-agent repo: `gh repo create peristyle-ai/<agent> --private`
-2. Add the per-repo deploy key for `peristyle@localhost` (the existing pattern)
-3. Clone to `pie/<agent>/` on `peristyle@localhost`
+1. Create the per-agent repo: `gh repo create <owner>/<agent> --private`
+2. Add the per-repo deploy key for the install's Unix user (the existing pattern)
+3. Clone to `pie/<agent>/` on that user
 4. Copy this template's files into `pie/<agent>/identity/`, removing the `.template` suffix
 5. Fill in the per-agent details (name, creature, role, host, working agreements)
-6. Add `agents: [..., <agent>]` to `/opt/harness/harness/config.yaml`
+6. Add `agents: [..., <agent>]` to the install's `config.yaml`
 7. Apply the DB schema (`psql -d <db> -v agent_name=<agent> -f schema/init.sql`)
 8. Restart the harness
 
 ### For an existing agent (sweep)
 
-The 2026-10-19 sweeps (Evie, the agent, Wisp) followed this pattern: copy
+The 2026-10-19 sweeps followed this pattern: copy
 the template into the agent's `identity/`, customize for the role, and
 commit. The "OpenClaw-era" wording in older agents should be replaced
 with harness language. See `memory/2026-10-19.md` for the
@@ -55,9 +55,8 @@ worked-example sweep log.
 
 ## What "critical should.md elements" means
 
-After the Evie + the agent + Wisp sweeps (Oct 15 / Oct 18 / Oct 19), the
-elements that consistently made the agent more reliable on complex
-tasks were:
+After the 2026-10 sweeps, the elements that consistently made the agent
+more reliable on complex tasks were:
 
 - **A clear "What I do" section in IDENTITY.md** — the agent needs to
   know its role without having to infer it from AGENTS.md.
@@ -89,6 +88,6 @@ What we **deliberately did not** keep in the templates:
   template element)
 - Per-agent role-specific scripts (those live in `pie/<agent>/scripts/`
   or `pie/<agent>/skills/`, not in the bootstrap)
-- The 33 KB of historical context that used to live in clawbie's
+- Large amounts of historical context that used to live in an agent's
   MEMORY.md (archived to `pie/<agent>/docs/MEMORY_ARCHIVE_<date>.md`
   if needed, not in the hot file)

@@ -98,7 +98,11 @@ jobs:
         run: |
           set -euo pipefail
           export PGPASSWORD=password
-          for agent in wisp evie clawbie; do
+          # The agent names come from config.yaml.example -- the SAME file
+          # the template ships -- so the CI never names an agent the
+          # template does not. (It used to hard-code this project's own
+          # agent names, which nobody else's install has.)
+          for agent in $(python3 -c "import yaml; print(' '.join(yaml.safe_load(open('config.yaml.example'))['app']['agents']))"); do
             psql -h localhost -U postgres -d harness -v ON_ERROR_STOP=1 \
                  -v "agent_name=$agent" -f schema/init.sql
           done

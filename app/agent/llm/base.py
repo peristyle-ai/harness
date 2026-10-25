@@ -25,7 +25,7 @@ class ContextWindowExceeded(RuntimeError):
     It is a 400, NOT a 5xx and NOT a malformed request -- reading the status
     code alone sends you hunting for a request-shape bug. The harness maps it
     to this type so the loop can tell the agent what actually happened
-    (2026-10-25: Evie's turn hit it after 88 iterations / ~1.4M tokens).
+    (2026-10-25: a turn hit it after 88 iterations / ~1.4M tokens).
     """
 
     def __init__(self, message: str | None = None, detail: str = "") -> None:
@@ -150,7 +150,7 @@ class BaseLLM(Protocol):
         Plus honours `Retry-After` if the server sends it (in seconds
         or HTTP-date format).
 
-        Added 2026-10-20 after evie hit a 529 from MiniMax mid-iter-3
+        Added 2026-10-20 after a 529 from MiniMax mid-iter-3
         with 6 tool calls already executed; the loop had no retry path
         and surfaced the bare HTTPStatusError to the user.
         """

@@ -97,7 +97,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
     # The sql_query tool needs the harness database URL. It used to read
     # DATABASE_URL out of the .env; the config is the source of truth now.
     from .agent.tools._safety import set_harness_dsn
-    set_harness_dsn(cfg.db.url)
+    set_harness_dsn(cfg.db.url, cfg.db.database)
 
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config["SECRET_KEY"] = cfg.app.secret_key
@@ -135,7 +135,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
     # Worker.init_signals() -- which runs BEFORE load_wsgi(), so
     # create_app() is the right place to chain onto it. Without this, a
     # service restart in the middle of a turn leaves the user turn in
-    # the table with no reply and no trace (Mal's "why didn't Evie
+    # the table with no reply and no trace (the "why didn't the agent
     # respond?" on 2026-10-22 07:51).
     try:
         from app.agent.turn_guard import install_sigterm_handler

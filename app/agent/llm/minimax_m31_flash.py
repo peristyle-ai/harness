@@ -22,12 +22,12 @@ shape — i.e. {"effort": "medium"}. The diatomic z.ai adapter reads the
 same field but interprets it as z.ai's `{"type": "enabled"}` shape —
 each adapter maps the dict onto its provider's wire format.
 
-Provisioned 2026-10-20 for the evie M3.1-Flash test (per Mal's request).
-Superseded 2026-10-21 (per Mal): ALL THREE intelligences now run this
-adapter. wisp moved off minimax_m3 (via the global llm: block) and clawbie
-moved off z.ai's glm_5_3_flash; all three share one MiniMax endpoint and
-one API key. evie and clawbie set effort=medium explicitly; wisp has no
-`thinking` key and therefore uses the adapter default (max).
+Provisioned 2026-10-20 for a M3.1-Flash test (per Mal's request).
+Superseded 2026-10-21 (per Mal): every agent now runs this adapter.
+The agents moved off minimax_m3 (via the global llm: block) and off
+z.ai's glm_5_3_flash; they all share one MiniMax endpoint and one API
+key. An agent with a per-agent block sets effort=medium explicitly; one
+without a `thinking` key uses the adapter default (max).
 
 SSE streaming (2026-10-21, per Mal): complete() now streams by default. The
 transport reassembles the same Anthropic message dict a buffered response

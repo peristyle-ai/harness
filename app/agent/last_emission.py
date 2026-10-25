@@ -29,7 +29,7 @@ Also captures (2026-10-20):
   011). Including `max_tool_iterations` when known so the admin
   view can detect "model fabricated the canned failure text"
   — the message says "40 tool iterations" while the configured
-  cap is 500 (see harness memory 2026-10-20 evie turn 279).
+  cap is 500 (see the harness memory for 2026-10-20, turn 279).
 """
 from __future__ import annotations
 

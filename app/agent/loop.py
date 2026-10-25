@@ -196,7 +196,7 @@ class ChatResponse:
 def _resolve_upload_dir() -> Any:
     """Where uploaded files live, WITHOUT needing a Flask app context.
 
-    Bug, 2026-10-22 15:33 (Mal): Evie's turn failed INSTANTLY with
+    Bug, 2026-10-22 15:33 (Mal): an agent's turn failed INSTANTLY with
     "stream ended without a final event" because the server logged
     "Working outside of application context". The NDJSON streaming path
     runs the agent loop in a daemon thread (api.py's `pump`), which has
@@ -246,7 +246,7 @@ class AgentLoop:
         # (preserves the pre-multi-agent behavior).
         self.bootstrap_registry = bootstrap_registry
         self.memory_registry: dict = memory_registry or {}
-        # Per-agent LLM registry (added 2026-10-19 for the clawbie z.ai test).
+        # Per-agent LLM registry (added 2026-10-19 for a z.ai model test).
         # Missing agents fall through to self.adapter (the global LLM).
         self.adapter_registry: dict = adapter_registry or {}
         max_concurrent = getattr(config.agent, "max_concurrent_llm", 8)
@@ -283,7 +283,7 @@ class AgentLoop:
         """Look up the LLM adapter for `agent_name`. Falls back to the
         global `self.adapter` if no registry entry.
 
-        Added 2026-10-19 for the per-agent LLM dispatch (clawbie z.ai
+        Added 2026-10-19 for the per-agent LLM dispatch (a z.ai
         test). Same shape as _agent_bootstrap + _agent_memory — the
         per-agent registry is opt-in, missing agents use the global.
         """
@@ -624,7 +624,7 @@ class AgentLoop:
         # Per-agent dispatch (multi-agent since 2026-10-15).
         agent_memory = self._agent_memory(agent_name)
         agent_bootstrap = self._agent_bootstrap(agent_name)
-        # Per-agent LLM (added 2026-10-19 for the clawbie z.ai test).
+        # Per-agent LLM (added 2026-10-19 for a z.ai model test).
         # Use this for every adapter call in this turn — complete(),
         # format_tool_result, extract_assistant_content, system_prompt lookup.
         agent_adapter = self._adapter_for(agent_name)
@@ -670,7 +670,7 @@ class AgentLoop:
         # The loop replays the WHOLE turn on every model call, so a long
         # tool-heavy turn grows the request without bound: the assistant's
         # thinking blocks (~37 KB per response) and the tool results are
-        # echoed back every iteration. On 2026-10-25 Evie's turn reached
+        # echoed back every iteration. On 2026-10-25 a turn reached
         # ~1.4M tokens in a single request against MiniMax-M3.1-Flash's
         # 1,000,000-token window and the API answered
         #   400 invalid params, context window exceeds limit (2013)
@@ -702,7 +702,7 @@ class AgentLoop:
         # The thought stream is NOT persisted as turns (2026-10-25, per
         # Mal: "the thought streams did come through, but as separate turns
         # which has consumed the chat history in the webchat and also
-        # polluted the evie.turns table with erroneous turns").
+        # polluted the agent's turns table with erroneous turns").
         #
         # It used to be written as one row per iteration (model=
         # 'thought-stream'), which put 132 rows into one turn's history
@@ -753,7 +753,7 @@ class AgentLoop:
         # (app/agent/turn_guard.py) uses this registry to write an
         # "interrupted" turn before the process goes away. Without it a
         # server restart mid-turn leaves a user turn with no reply and
-        # no trace -- exactly what happened to Mal's Evie message on
+        # no trace -- exactly what happened to Mal's message on
         # 2026-10-21 21:12.
         turn_state = turn_guard.TurnState(
             conv_id=conv_id,
@@ -866,7 +866,7 @@ class AgentLoop:
                     # into trajectory → turns.trajectory. Surfaced in
                     # /admin/last-emission for debugging the hallucination
                     # /fabrication failure mode (see memory 2026-10-20
-                    # evie turn 279 — model narrated work it didn't do;
+                    # turn 279 -- model narrated work it didn't do;
                     # the thinking trail makes the contradiction visible).
                     # Adapters that don't produce them (M3, kimi_k3,
                     # glm_5_3_flash) leave this empty by default.
@@ -1007,7 +1007,7 @@ class AgentLoop:
                         # abandoned iter_records mean nudges_so_far
                         # stays at 0 forever, and the model gets
                         # infinite narrate warnings.
-                        # Repro: evie turn 201 (4:42 PM) saw 3 narrate
+                        # Repro: turn 201 (4:42 PM) saw 3 narrate
                         # warnings when the cap was supposed to be 2.
                         emission_iters.append(iter_record)
                         # Phase 15.9: use intent-specific nudge when
@@ -1421,7 +1421,7 @@ class AgentLoop:
             # When the loop completed cleanly, assistant_turn_persisted
             # is True and this is a no-op. When the loop was interrupted
             # mid-iter (the common case after a browser reload while
-            # evie's thinking), this writes whatever trajectory /
+            # the agent's thinking), this writes whatever trajectory /
             # final_text we accumulated so the user can pick up on
             # page refresh instead of losing the turn entirely.
             if not assistant_turn_persisted and turn_state.interrupted_id() is None:
