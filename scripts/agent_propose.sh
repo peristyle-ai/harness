@@ -25,7 +25,10 @@
 # which cannot approve its own pull request, so it waits for Grove.
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The repository root. `git rev-parse` first, so the script also works
+# when it is run from a copy kept inside the checkout (an agent's
+# scripts/ directory), not only from the repository's own scripts/.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKTREE_ROOT="${AGENT_WORKTREE_ROOT:-$(dirname "$REPO_ROOT")/harness-worktrees}"
 SLUG="${2:-}"
 REMOTE="${AGENT_REMOTE:-origin}"
