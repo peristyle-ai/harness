@@ -350,6 +350,12 @@ chat UI sets them.
     plants secrets in a throwaway repository and asserts they are
     caught -- including one that is committed and then deleted, and one
     that only ever appears in a commit message.
+  - Exactly one file is exempt from the scan:
+    `tests/test_check_no_secrets.py`, because it plants real-shaped
+    secrets to prove the scanner works. **The exemption is printed on
+    every run**, so it is never silent, and
+    `tests/test_check_no_secrets.py` pins the exemption list to that
+    one path so it cannot grow quietly.
 - **GitHub's own secret scanning and push protection** are free on a
   public repository. On a private repository they require a paid GitHub
   Advanced Security subscription, so until this repository is public the

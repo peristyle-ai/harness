@@ -63,6 +63,17 @@ ALLOWLIST: list[tuple[str, str, str]] = [
     ("docs/*", "password", "a documentation example"),
 ]
 
+# --- the exempt files --------------------------------------------------
+# A file whose PURPOSE is to contain secret-shaped strings cannot be
+# scanned for secret-shaped strings. This is the only such file, and the
+# exemption is printed on every run -- it is never silent, and it cannot
+# grow without someone editing this list.
+EXEMPT_PATHS: list[tuple[str, str]] = [
+    ("tests/test_check_no_secrets.py",
+     "the scanner's own test file: it plants real-shaped secrets to "
+     "prove the scanner catches them"),
+]
+
 # --- the placeholders ---------------------------------------------------
 # A value that is obviously a placeholder is never a secret, whatever
 # its shape.
@@ -87,6 +98,15 @@ def excused(path: str, value: str) -> str | None:
     return None
 
 
+def is_exempt(path: str) -> str | None:
+    """The reason this path is not scanned, if it is."""
+    import fnmatch
+    for pattern, why in EXEMPT_PATHS:
+        if fnmatch.fnmatch(path, pattern):
+            return why
+    return None
+
+
 def scan_text(text: str, where: str, findings: list) -> None:
     for name, rx in SECRET_PATTERNS:
         for m in rx.finditer(text):
@@ -95,6 +115,8 @@ def scan_text(text: str, where: str, findings: list) -> None:
             if PLACEHOLDER.match(value):
                 continue
             path = where.split(":", 1)[-1] if ":" in where else where
+            if is_exempt(path):
+                continue
             why = excused(path, value)
             if why:
                 continue
@@ -107,11 +129,16 @@ def scan_text(text: str, where: str, findings: list) -> None:
 
 def main() -> int:
     findings: list = []
+    exempted: dict[str, str] = {}
 
     # ---- 1. the working tree -----------------------------------------
     tracked = [f for f in run(["git", "ls-files", "-z"]).split("\0") if f]
     tree_bytes = 0
     for path in tracked:
+        why = is_exempt(path)
+        if why:
+            exempted[path] = why
+            continue
         try:
             data = open(path, "rb").read()
         except OSError:
@@ -129,6 +156,9 @@ def main() -> int:
              if run(["git", "cat-file", "-t", oid]).strip() == "blob"]
     scanned = 0
     for oid, name in blobs:
+        if name and is_exempt(name):
+            exempted.setdefault(name, is_exempt(name))
+            continue
         data = subprocess.run(["git", "cat-file", "blob", oid],
                               capture_output=True).stdout
         scanned += len(data)
@@ -152,6 +182,14 @@ def main() -> int:
         return 2
 
     # ---- the report ---------------------------------------------------
+    # The exemptions are printed on every run. An exemption nobody can
+    # see is a hole; an exemption that is printed is a decision.
+    if exempted:
+        print()
+        print(f"exempted {len(exempted)} file(s) -- these are NOT scanned:")
+        for path, why in sorted(exempted.items()):
+            print(f"  {path}\n      {why}")
+
     if findings:
         print()
         print("=" * 72)
