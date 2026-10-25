@@ -126,18 +126,34 @@ else
     info ".venv already exists — keeping it"
 fi
 PY="$REPO/.venv/bin/python"
-[ -x "$PY" ] || die "the virtualenv has no python interpreter"
+if [ ! -x "$PY" ]; then
+    # No virtualenv yet. A real install creates it in the step above; a
+    # dry run has not, so fall back to the system python for the CONFIG
+    # READ (which needs only pyyaml) and skip the app's own check, which
+    # needs the app's dependencies.
+    if python3 -c "import yaml" >/dev/null 2>&1; then
+        PY="python3"
+        info "no .venv yet — reading the config with the system python"
+    else
+        die "the virtualenv has no python interpreter, and the system python3
+    has no pyyaml either. Install python3-yaml, or run the install for real."
+    fi
+fi
 
 # --- 3. read + validate config.yaml --------------------------------------
 say "3/8  the config"
 {
-    # The app's own check: mode, required values, placeholders.
-    as_user "$PY" - "$REPO/config.yaml" <<'PYEOF' || die "config.yaml is not a working config (see above)"
+    if [ -x "$REPO/.venv/bin/python" ]; then
+        # The app's own check: mode, required values, placeholders.
+        as_user "$REPO/.venv/bin/python" - "$REPO/config.yaml" <<'PYEOF' || die "config.yaml is not a working config (see above)"
 import sys
 from app.security import sanity_check_config
 sanity_check_config(sys.argv[1])
 print("    the config passed the app's own startup check")
 PYEOF
+    else
+        info "skipped the app's own check (no virtualenv yet)"
+    fi
 
     # And pull the values out of it.
     eval "$(as_user "$PY" - "$REPO/config.yaml" <<'PYEOF'
@@ -242,13 +258,12 @@ else
         info "database       $DB_NAME (created, owned by $OPERATOR_ROLE)"
     fi
 
-    # The extensions. pgvector is NOT a trusted extension, so only a
-    # superuser may create it -- that is why this step is separate.
-    as_postgres -qc "CREATE EXTENSION IF NOT EXISTS \"pgcrypto\"" >/dev/null
-    as_postgres -qc "CREATE EXTENSION IF NOT EXISTS \"pg_trgm\"" >/dev/null
-    as_postgres -qc "CREATE EXTENSION IF NOT EXISTS \"citext\"" >/dev/null
-    as_postgres -qc "CREATE EXTENSION IF NOT EXISTS \"vector\"" >/dev/null
-    info "extensions     pgcrypto, pg_trgm, citext, vector"
+    # The extensions, IN THIS DATABASE. pgvector is NOT a trusted
+    # extension, so only a superuser may create it -- which is why this
+    # step is separate from the schema step below (the operator role
+    # cannot do this). schema/extensions.sql is idempotent.
+    as_postgres -d "$DB_NAME" -f "$REPO/schema/extensions.sql" >/dev/null
+    info "extensions     pgcrypto, pg_trgm, citext, vector (in $DB_NAME)"
 fi
 
 # --- 5. the schema -------------------------------------------------------
@@ -257,7 +272,10 @@ if [ "$DRY_RUN" = "yes" ]; then
     info "would apply schema/init.sql and schema/grants.sql as $OPERATOR_ROLE"
 else
     as_user bash -c "cd '$REPO' && bash tools/migrate.sh" \
-        || die "the schema could not be applied — see the output above"
+        > "$REPO/.migrate.out" 2>&1 \
+        || { cat "$REPO/.migrate.out"; rm -f "$REPO/.migrate.out"; \
+             die "the schema could not be applied — see the output above"; }
+    rm -f "$REPO/.migrate.out"
     info "the schema and the runtime role's grants are applied"
 fi
 
@@ -275,7 +293,7 @@ else
               OPERATOR_TIMEZONE="$OPERATOR_TIMEZONE" BIND="$BIND" \
               "$PY" - <<'PYEOF'
 import os, sys
-sys.path.insert(0, os.environ["REPO"])
+sys.path.insert(0, os.path.join(os.environ["REPO"], "tools"))
 from pathlib import Path
 from apply_install_config import render_identity
 
@@ -331,7 +349,10 @@ PYEOF
         fi
         as_user env DATABASE_URL="$DATABASE" "$PY" "$REPO/tools/create_user.py" \
               --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" --role admin \
-            || die "could not create the admin — see the output above"
+              > "$REPO/.create_user.out" 2>&1 \
+              || { cat "$REPO/.create_user.out"; rm -f "$REPO/.create_user.out"; \
+                   die "could not create the admin — see the output above"; }
+        rm -f "$REPO/.create_user.out"
         info "admin         $ADMIN_EMAIL (created)"
     fi
 fi
