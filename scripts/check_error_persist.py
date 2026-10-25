@@ -13,7 +13,7 @@ This test:
 
 Usage:
   set -a; . ./.env; set +a
-  .venv/bin/python scripts/test_error_persist.py [agent]
+  .venv/bin/python scripts/check_error_persist.py [agent]
 """
 from __future__ import annotations
 

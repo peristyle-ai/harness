@@ -87,3 +87,24 @@ uploads/
 # The tracked example is install/peribot.example.yaml.
 install/*.yaml
 !install/peribot.example.yaml
+
+# --- Runtime content and internal working notes (untracked 2026-10-26) ---
+
+# Entity icons (agent avatars) are UPLOADED at runtime through
+# PUT /api/v1/entities/<name>/icon and stored here. They are user
+# content, not source: they are per-install, and the filename carries
+# the agent name of whoever runs the install. The GET endpoint already
+# handles a missing file (404 + a log line), so a fresh clone simply
+# has no avatars and the UI falls back to the default one.
+# Note: the contents are ignored, not the directory itself, so the
+# README.md below survives and documents the directory's purpose.
+app/static/entity-icons/*
+!app/static/entity-icons/README.md
+
+# Internal working documents. These are dated plans for a specific
+# install (per-agent schemas, tunnel IDs, host paths); they are not
+# contributor documentation, and they go stale the moment the work
+# they describe lands. The design that actually shipped lives in the
+# README, in the code, and in schema/.
+docs/
+REQUIREMENTS_AND_SPECIFICATIONS.md

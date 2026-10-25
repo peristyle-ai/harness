@@ -114,10 +114,11 @@ harness/
 ├── schema/init.sql       the whole schema, in one file (idempotent)
 ├── install/              the install-config format and an example
 ├── tools/                apply_install_config.py, migrate.sh and the ops scripts
-├── scripts/              the smoke tests and the reverie timer
-├── tests/                pytest
+├── scripts/              operational + diagnostic scripts (not the test suite)
+├── tests/                pytest — the test suite
 ├── config.yaml           non-secret configuration (committed)
 ├── .env.example          every environment variable, documented
+├── pytest.ini            pytest configuration (testpaths, collection rules)
 ├── run.sh                the gunicorn entrypoint
 └── LICENSE               MIT
 ```
@@ -148,11 +149,24 @@ themselves when it is not there.
 
 ## Documentation
 
-- [`REQUIREMENTS_AND_SPECIFICATIONS.md`](./REQUIREMENTS_AND_SPECIFICATIONS.md) —
-  the design and the reasoning behind it
-- [`SECURITY.md`](./SECURITY.md) — the security model, the headers and the
-  reporting policy
-- [`docs/`](./docs) — the plans that are still in flight
+- [`SECURITY.md`](./SECURITY.md) — the security model, the tool roster, the
+  response headers and the vulnerability-reporting policy
+- [`README_INSTALL.md`](./README_INSTALL.md) — installing on a new machine
+- [`CONTRIBUTING.md`](./CONTRIBUTING.md) — how to contribute
+
+The design that shipped is the code: the schema in `schema/`, the API in
+`app/routes/`, the agent loop and the tool roster in `app/agent/`.
+
+### Third-party code
+
+`app/static/` carries two vendored browser bundles — `marked.min.js` (a
+markdown parser) and `purify.min.js` (an HTML sanitiser). They are
+**vendored, not imported**: this is a Python app with no JavaScript build
+step, so there is no `node_modules` and no bundler to resolve an import
+from. They are loaded with a plain `<script>` tag in the templates, and the
+chat UI falls back to escaped plain text if they ever fail to load.
+Versions and licences are in
+[`app/static/THIRD_PARTY_NOTICES.md`](./app/static/THIRD_PARTY_NOTICES.md).
 
 ## License
 

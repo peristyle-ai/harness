@@ -1,6 +1,13 @@
-"""Verify _complete_with_deltas actually emits deltas and returns a response."""
+"""Verify _complete_with_deltas actually emits deltas and returns a response.
+
+Run: set -a; . ./.env; set +a; .venv/bin/python scripts/check_delta_forwarding.py
+"""
 import sys
-sys.path.insert(0, "/opt/harness/harness")
+from pathlib import Path
+
+# Anchor the import on the repo root (the parent of scripts/), so this
+# runs from any checkout -- not only from /opt/harness/harness.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import load_config
 from app.agent.llm import get_adapter
