@@ -1424,7 +1424,11 @@ class AgentLoop:
             # the agent's thinking), this writes whatever trajectory /
             # final_text we accumulated so the user can pick up on
             # page refresh instead of losing the turn entirely.
-            if not assistant_turn_persisted and turn_state.interrupted_id() is None:
+            if (not assistant_turn_persisted
+                    and turn_state.interrupted_id() is None
+                    and not turn_guard.interrupt_already_written(
+                        conv_id, request_id
+                    )):
                 self._persist_partial_assistant_turn(
                     agent_name=agent_name,
                     conv_id=conv_id,
@@ -1456,9 +1460,23 @@ class AgentLoop:
         embedding server over HTTP, and a signal handler must not block
         on the network -- systemd escalates to SIGKILL after
         TimeoutStopSec, which would lose the turn we are trying to save.
+
+        The "exactly once" guarantee comes from turn_guard's atomic
+        CLAIM, not from reading `state.interrupted_id()`. That check is
+        a check-then-act across a database write: two callers can both
+        read "not written yet" and both write. It happened on
+        2026-10-26 -- a restart during a live turn left two identical
+        assistant rows (ids 196 and 197) in clawbie.turns, with the
+        second row's computed latency ONE MILLISECOND SMALLER than the
+        first's, which is only possible if the two callers interleaved.
+        See turn_guard.claim_interrupt.
         """
-        if state.interrupted_id() is not None:
-            return state.interrupted_id()
+        claimed, existing = turn_guard.claim_interrupt(
+            state.conv_id, state.request_id
+        )
+        if not claimed:
+            # Someone else is writing (or has written) the marker.
+            return existing
         text = (
             "⚠️ _This turn was interrupted before I could finish — "
             f"{reason}._\n\n"
@@ -1487,7 +1505,11 @@ class AgentLoop:
             )
         except Exception:
             log.exception("failed to persist interrupted turn: conv=%s", state.conv_id)
+            # Hand the claim back: without it the turn would have no
+            # marker at all, which is the failure this exists to stop.
+            turn_guard.release_interrupt(state.conv_id, state.request_id)
             return None
+        turn_guard.complete_interrupt(state.conv_id, state.request_id, turn.id)
         state.mark_interrupted(turn.id)
         log.warning(
             "interrupted turn persisted: conv=%s turn_id=%s reason=%s",
