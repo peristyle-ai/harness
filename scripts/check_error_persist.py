@@ -27,7 +27,7 @@ from flask import g, session
 
 from app import create_app
 
-AGENT = sys.argv[1] if len(sys.argv) > 1 else "clawbie"
+AGENT = sys.argv[1] if len(sys.argv) > 1 else "peribot"
 EMAIL = "harness-selftest@example.com"
 
 app = create_app()

@@ -3,11 +3,11 @@ second user turn.
 
 Why this exists
 ---------------
-On 2026-10-21 20:57 Mal sent Evie "ok ive made the actual payment to
+On 2026-10-21 20:57 an operator sent an agent "ok ive made the actual payment to
 sample employee, please register that in the accounts system...". The turn was
 accepted and ran for ~14 minutes (39 iterations, ~55 tool calls), then
 the harness service was restarted underneath it and the turn was lost:
-the user row survived in `evie.turns`, the assistant row never existed.
+the user row survived in the turns table, the assistant row never existed.
 
 Re-sending the message from the browser would write a SECOND user row.
 That row would show up twice in the conversation and twice in the
@@ -26,7 +26,7 @@ This script re-runs the turn in-process against the EXISTING user turn:
 
 Usage:
   set -a; . ./.env; set +a
-  .venv/bin/python scripts/retry_turn.py --agent evie \
+  .venv/bin/python scripts/retry_turn.py --agent peribot \
       --conversation 8b3ad9cd-1f31-4923-97aa-6c758352e63f \
       [--user-turn-id 299] [--user-id 72]
 

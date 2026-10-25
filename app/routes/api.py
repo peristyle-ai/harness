@@ -5,7 +5,7 @@ Phase 10: image uploads via /api/v1/uploads (multipart) and serve
           via GET /api/v1/uploads/<id>.<ext>. Files land in
           HARNESS_UPLOAD_DIR with a UUID-prefixed name; the
           original filename is kept only in the JSONB
-          `wisp.turns.attachments` metadata.
+          `<agent>.turns.attachments` metadata.
 """
 from __future__ import annotations
 
@@ -197,7 +197,7 @@ def chat():
     """One-shot chat. Requires login.
 
     Request:
-        {"agent": "wisp", "conversation_id": "uuid-or-null", "message": "..."}
+        {"agent": "peribot", "conversation_id": "uuid-or-null", "message": "..."}
     Response:
         {"conversation_id": "...", "assistant": "...", "model": "...",
          "latency_ms": N, "tool_iterations": M, "retrieved_chunk_ids": [...]}
@@ -283,7 +283,7 @@ def internal_timer():
     appears as a new conversation in the HMI under user_id=3 (the operator).
 
     Body (JSON):
-        {"agent": "evie", "message": "..."}
+        {"agent": "peribot", "message": "..."}
 
     Required headers:
         X-Harness-Token: matches HARNESS_INTERNAL_TOKEN env var
@@ -384,7 +384,7 @@ def internal_reverie():
     check (operator use).
 
     Body (JSON):
-        {"agent": "wisp", "force": false}
+        {"agent": "peribot", "force": false}
 
     Required headers:
         X-Harness-Token: matches HARNESS_INTERNAL_TOKEN env var
@@ -519,7 +519,7 @@ def internal_reverie():
                     # the harness caches them in the BootstrapLoader at
                     # startup -- without a reload the agent would keep
                     # being served the OLD files until the next restart
-                    # (wisp's reverie spotted this itself and proposed
+                    # (the agent's reverie spotted this itself and proposed
                     # it as a fix). Re-read them now.
                     try:
                         loader = ext["bootstrap_registry"].get(agent_name)
@@ -631,9 +631,9 @@ def set_agent():
     """List available agents (GET) or set the active agent for this session (POST).
 
     GET response:
-        {"agents": ["wisp", "evie"], "active": "wisp", "default": "wisp"}
-    POST body: {"agent": "evie"}  -> sets session["active_agent_name"]
-    POST response: {"active": "evie"} on success, 400 on unknown agent.
+        {"agents": ["peribot"], "active": "peribot", "default": "peribot"}
+    POST body: {"agent": "peribot"}  -> sets session["active_agent_name"]
+    POST response: {"active": "peribot"} on success, 400 on unknown agent.
     """
     cfg = current_app.config["HARNESS_CONFIG_OBJ"]
     registry = current_app.extensions["harness"].get("bootstrap_registry")
@@ -682,8 +682,8 @@ def conversations_list():
                 """
                 SELECT c.id, c.title, c.created_at, c.updated_at,
                        COUNT(t.id) AS message_count
-                  FROM wisp.conversations c
-                  LEFT JOIN wisp.turns t ON t.conversation_id = c.id
+                  FROM peribot.conversations c
+                  LEFT JOIN peribot.turns t ON t.conversation_id = c.id
                  WHERE c.is_group = FALSE
                  GROUP BY c.id
                  ORDER BY c.updated_at DESC
@@ -729,7 +729,7 @@ def conversation_get(conv_id: UUID):
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, title, created_at, updated_at FROM wisp.conversations WHERE id = %s",
+                "SELECT id, title, created_at, updated_at FROM peribot.conversations WHERE id = %s",
                 (conv_id,),
             )
             conv = cur.fetchone()
@@ -739,7 +739,7 @@ def conversation_get(conv_id: UUID):
                 cur.execute(
                     """
                     SELECT id, role, content, model, attachments, created_at
-                      FROM wisp.turns
+                      FROM peribot.turns
                      WHERE conversation_id = %s
                      ORDER BY created_at ASC
                     """,
@@ -749,7 +749,7 @@ def conversation_get(conv_id: UUID):
                 cur.execute(
                     """
                     SELECT id, role, content, model, attachments, created_at
-                      FROM wisp.turns
+                      FROM peribot.turns
                      WHERE conversation_id = %s
                      ORDER BY created_at DESC
                      LIMIT %s
@@ -1413,7 +1413,7 @@ MAX_ICON_BYTES = 2 * 1024 * 1024  # 2 MiB
 
 
 def _safe_name(name: str) -> str:
-    # Entity names are typically simple identifiers (wisp, evie, clawbie).
+    # Entity names are typically simple identifiers (peribot, ...).
     # Keep them as-is for now; if the registry ever allows weirder names
     # we can hash here. Reject anything that smells like a path traversal.
     if ".." in name or "/" in name or "\\" in name or not name:
@@ -1430,7 +1430,7 @@ def entity_turn_active(name: str):
     If the browser refreshes (or the connection drops) the bubble is
     gone even though the turn keeps running server-side, and there was
     nothing to re-attach to -- the chat looked empty for 40+ minutes
-    while Evie was still working.
+    while the agent was still working.
 
     This endpoint exposes the in-flight turn's buffered NDJSON events so
     the UI can rebuild the bubble (iteration count, tool calls, partial
@@ -1456,7 +1456,7 @@ def entity_turn_error(name: str):
     2026-10-22: when the NDJSON stream died without a final event the
     browser rendered a ⚠️ bubble, but that bubble lived only in the DOM
     -- the next refresh made the failure look like silence again, which
-    is how Mal lost an hour to "why didn't Evie answer?". This endpoint
+    is how an operator lost an hour to "why didn't the agent answer?". This endpoint
     writes the failure into the turns table so it survives a refresh and
     shows up in the conversation history.
 

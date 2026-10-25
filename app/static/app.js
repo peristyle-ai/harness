@@ -608,7 +608,7 @@
   // === Live-turn reattach (2026-10-22) ==================================
   // The streaming bubble is client-side DOM. A browser refresh (or a
   // dropped connection) wipes it even though the turn keeps running
-  // server-side -- on 2026-10-21 Evie worked for 40+ minutes on a turn
+  // server-side -- on 2026-10-21 an agent worked for 40+ minutes on a turn
   // whose bubble vanished on refresh, and the chat looked empty.
   //
   // GET /api/v1/entities/<name>/turns/active exposes the in-flight
@@ -909,7 +909,7 @@
         // Persist the failure server-side (2026-10-22). The ⚠️ bubble
         // above lives only in the DOM -- without this, the next refresh
         // makes the failure look like silence again, which is how Mal
-        // lost an Evie turn to a server restart on 2026-10-21.
+        // lost an agent's turn to a server restart on 2026-10-21.
         // The endpoint is idempotent: if the server already wrote
         // something for this turn (partial turn, interrupted marker, or
         // the real answer) it does nothing.

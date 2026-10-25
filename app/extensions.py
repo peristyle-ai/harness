@@ -181,7 +181,7 @@ def build_extensions(config: Any) -> dict[str, Any]:
     default_memory = memory_apis.get(config.app.default_agent) or next(iter(memory_apis.values()))
     default_bootstrap = bootstrap_loaders.get(config.app.default_agent) or next(iter(bootstrap_loaders.values()), None)
 
-    # Per-agent LLM adapter registry (added 2026-10-19 for the clawbie
+    # Per-agent LLM adapter registry (added 2026-10-19 for a per-agent
     # z.ai test). For each agent that has an entry in config.llm_per_agent,
     # build a separate adapter using the override config. Missing agents
     # fall through to the global `adapter` (passed to AgentLoop as the

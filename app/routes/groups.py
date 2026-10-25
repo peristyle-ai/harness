@@ -121,7 +121,7 @@ def groups_create():
     """Create a group (admin only).
 
     Body: {"name": "...", "description": "...", "member_ids": [1, 2],
-           "agent_names": ["wisp", "clawbie"]}
+           "agent_names": ["peribot", "second"]}
 
     The creator is always a member (role=owner). If no agent roster is
     given, every installed agent is added.
@@ -235,7 +235,7 @@ def group_remove_member(group_id: UUID, user_id: int):
 def group_set_agents(group_id: UUID):
     """Replace the group's agent roster (admin only).
 
-    Body: {"agent_names": ["wisp", "clawbie"]}
+    Body: {"agent_names": ["peribot", "second"]}
     """
     user, err = _require_admin()
     if err:
@@ -274,7 +274,7 @@ def group_messages(group_id: UUID):
 def group_chat(group_id: UUID):
     """Post a message to a group and run the mentioned agents.
 
-    Body: {"message": "@wisp @clawbie, please update your git repos"}
+    Body: {"message": "@peribot @second, please update your git repos"}
 
     Only the @mentioned agents take a turn, in mention order. Each one
     sees the group transcript plus what the other mentioned agents

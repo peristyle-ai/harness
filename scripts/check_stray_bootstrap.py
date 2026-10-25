@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """Guard against a second stray bootstrap file at pie/<agent>/ root.
 
-Background (2026-10-20): pie/evie/AGENTS.md existed at the agent root while the
+Background (2026-10-20): pie/<agent>/AGENTS.md existed at the agent root while the
 harness actually loads pie/<agent>/identity/AGENTS.md. The stray was untracked,
 never injected, and held a divergent draft of the coding-task rules — so an agent
 reading the filesystem believed it had instructions the loaded file did not

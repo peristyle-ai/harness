@@ -102,6 +102,13 @@ schema/*_schema.sql
 
 # --- Runtime content and internal working notes (untracked 2026-10-26) ---
 
+# The OpenClaw migration runbook. It is an internal, STALE document: it
+# describes the numbered migrations and the per-agent schema files this
+# repo used to have (it ships one schema/init.sql now), it hardcodes one
+# install's paths and GitHub org, and it carries that install's real
+# memory statistics. It is not contributor documentation.
+skills/openclaw_migration/
+
 # Entity icons (agent avatars) are UPLOADED at runtime through
 # PUT /api/v1/entities/<name>/icon and stored here. They are user
 # content, not source: they are per-install, and the filename carries

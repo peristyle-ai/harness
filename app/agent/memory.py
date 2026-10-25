@@ -1998,7 +1998,8 @@ _STATUS_PATTERNS = [
 
 def _is_status_commentary(text: str) -> bool:
     """Heuristic: a chunk is status commentary if it matches a short
-    acknowledgement pattern. Lifted from clawbie's status_commentary.py."""
+    acknowledgement pattern. Lifted from the harness's own status-commentary
+    heuristic."""
     if len(text.split()) > 30:
         return False
     return any(p.search(text) for p in _STATUS_PATTERNS)

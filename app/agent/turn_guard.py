@@ -2,7 +2,7 @@
 
 Why this exists
 ---------------
-On 2026-10-21 21:12 Mal sent Evie a message ("ok ive made the actual
+On 2026-10-21 21:12 an operator sent an agent a message ("ok ive made the actual
 payment to sample employee, please register that in the accounts system...") and
 got no reply, ever. The turn was accepted and ran for ~14 minutes
 (39 agent iterations, ~55 tool calls) inside a gunicorn gthread worker.

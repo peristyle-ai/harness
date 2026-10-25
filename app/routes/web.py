@@ -202,7 +202,7 @@ def admin_last_prompt_view():
 # detect the "model fabricated this text to give up early" failure mode:
 # when the model's final_text matches this template but the loop's
 # tool_iterations is well below the configured cap, the message is the
-# model's own output, not the harness's iteration-cap message. (See evie
+# model's own output, not the harness's iteration-cap message. (See the
 # turn 279 on 2026-10-20: model wrote "40 tool iterations" while the
 # configured cap was 500 and the loop only ran 2 iterations.)
 _CANNED_FAILURE_RE = re.compile(
@@ -326,7 +326,7 @@ def _render_last_emission_page(state: dict) -> str:
         # Phase 16.1 (2026-10-20): surface thinking blocks (Anthropic-style
         # extended thinking) inside each iter card. Collapsed by default;
         # the operator opens it when debugging a hallucination/fabrication
-        # failure mode (see harness memory 2026-10-20 evie turn 279). The
+        # failure mode (see the harness memory for 2026-10-20). The
         # blocks come through exactly as MiniMax emitted them — same
         # shape that round-trips back to the model.
         thinking_blocks = it.get("thinking_blocks") or []
@@ -475,14 +475,14 @@ def admin_last_emission_view():
 
 @bp.route("/admin/last-memories")
 def admin_last_memories_view():
-    """HTML view of the latest 20 rows in evie.memory_chunks.
+    """HTML view of the latest 20 rows in <agent>.memory_chunks.
 
     Operator-only (role=admin). Shows the most recent 20 rows ordered
     by id DESC (which is also creation order, since id is a bigserial).
     Each row shows: id, role, content preview (first 200 chars),
     importance, permanent, pin_source, source_type/source_ref, created_at.
 
-    Useful for seeing what evie just wrote / recalled / had pinned,
+    Useful for seeing what the agent just wrote / recalled / had pinned,
     in chronological order. Refreshes on every page load (no in-process
     state).
     """
@@ -499,7 +499,7 @@ def admin_last_memories_view():
 
     # Query the 20 most recent rows. The harness uses the peristyle
     # user's harness_app role on the harness DB (read+write on
-    # evie.* via the schema migration's GRANTs).
+    # <agent>.* via the schema migration's GRANTs).
     db_url = current_app.config["HARNESS_CONFIG_OBJ"].db.url
     rows = []
     try:
@@ -509,7 +509,7 @@ def admin_last_memories_view():
                     """
                     SELECT id, role, content, importance, permanent, pin_source,
                            source_type, source_ref, created_at
-                      FROM evie.memory_chunks
+                      FROM peribot.memory_chunks
                      ORDER BY id DESC
                      LIMIT 20
                     """
@@ -521,7 +521,7 @@ def admin_last_memories_view():
 
     body = [
         "<!doctype html><html><head><meta charset='utf-8'>",
-        "<title>harness — last 5 memories (evie)</title>",
+        "<title>harness — last 5 memories</title>",
         "<style>body{font:13px/1.5 -apple-system,system-ui,sans-serif;"
         "margin:24px;color:#1a1a1a;max-width:1100px}"
         "h1{font-size:18px;margin:0 0 12px}"
@@ -534,13 +534,13 @@ def admin_last_memories_view():
         "code{font-size:11px;color:#444;background:#f5f5f5;padding:1px 4px;"
         "border-radius:3px}"
         "a{color:#2a6df4}</style></head><body>",
-        "<h1>Last 20 memory rows (evie.memory_chunks)</h1>",
+        "<h1>Last 20 memory rows</h1>",
         f"<div class='meta'>{len(rows)} rows returned (newest first). "
         "Refreshes on every page load.</div>",
     ]
 
     if not rows:
-        body.append("<p><em>No memory rows yet for evie. Send a chat (or run memory_write) to create some.</em></p>")
+        body.append("<p><em>No memory rows yet. Send a chat (or run memory_write) to create some.</em></p>")
     else:
         body.append("<table>")
         body.append("<tr>"

@@ -18,7 +18,7 @@ Re-running it against a live database changes nothing.
 Run it once per agent:
 
 ```bash
-bash tools/migrate.sh wisp evie clawbie
+bash tools/migrate.sh peribot
 ```
 
 ## Two files that are not the schema
@@ -52,7 +52,7 @@ a setting is not something the app does.
 sudo -u postgres psql -d <db> -f schema/extensions.sql
 
 # the schema and the grants, as the operator:
-bash tools/migrate.sh wisp evie clawbie
+bash tools/migrate.sh peribot
 ```
 
 `tools/migrate.sh` does the second command, including the grants.
@@ -81,7 +81,7 @@ sudo -u postgres pg_dump --schema-only --no-owner --no-privileges \
 
 # one agent's schema (the three are identical modulo the schema name)
 pg_dump --schema-only --no-owner --no-privileges \
-     -d <db> -n wisp > /tmp/agent_dump.sql
+     -d <db> -n peribot > /tmp/agent_dump.sql
 
 PUBLIC_DUMP=/tmp/public_dump.sql AGENT_DUMP=/tmp/agent_dump.sql \
      python3 scripts/build_init.py
@@ -97,7 +97,7 @@ the live one, structurally (columns, constraints, indexes, foreign keys):
 
 ```bash
 sudo -u postgres psql -c "CREATE DATABASE harness_init_test"
-for agent in wisp evie clawbie; do
+for agent in peribot; do
   sudo -u postgres psql -d harness_init_test -v agent_name=$agent \
        -f schema/init.sql
 done

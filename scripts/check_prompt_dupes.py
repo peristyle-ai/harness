@@ -17,7 +17,7 @@ sys.path.insert(0, "/opt/harness/harness")
 
 from app import create_app
 
-AGENT = os.environ.get("CHECK_AGENT", "evie")
+AGENT = os.environ.get("CHECK_AGENT", "peribot")
 CONV = os.environ.get("CHECK_CONV", "8b3ad9cd-1f31-4923-97aa-6c758352e63f")
 TURN_ID = int(os.environ.get("CHECK_TURN", "299"))
 

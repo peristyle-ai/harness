@@ -1,4 +1,4 @@
-"""System prompt for the wisp agent (minimax_m3 adapter).
+"""System prompt for an agent (the minimax_m3 adapter).
 
 Rendered at agent startup with agent_name + agent_tone from agent_config.
 This is the only model-specific user-facing copy. Everything else in the

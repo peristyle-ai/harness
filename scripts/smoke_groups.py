@@ -32,6 +32,8 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+AGENT_A = os.environ.get("HARNESS_AGENT_A", "peribot")
+AGENT_B = os.environ.get("HARNESS_AGENT_B", "second")
 BASE = os.environ.get("HARNESS_SMOKE_BASE", "https://harness.example.com")
 PASSWORD = "smoke-groups-pw-2026"
 ADMIN_EMAIL = "smoke_groups_admin@example.com"
@@ -152,7 +154,7 @@ def main() -> int:
             "name": "smoke test group",
             "description": "created by scripts/smoke_groups.py",
             "member_ids": [member_id],
-            "agent_names": ["wisp", "clawbie"],
+            "agent_names": [AGENT_A, AGENT_B],
         })
         check("POST /api/v1/groups (admin) creates a group", st == 201,
               f"status={st} {data.get('error', '')}")
@@ -164,7 +166,7 @@ def main() -> int:
         check("group has the requested members",
               any(m["user_id"] == member_id for m in group["members"]))
         check("group has the requested agents",
-              set(group["agents"]) == {"wisp", "clawbie"}, str(group["agents"]))
+              set(group["agents"]) == {AGENT_A, AGENT_B}, str(group["agents"]))
 
         # --- 4. a non-admin cannot create a group -----------------------
         member = Client()
@@ -188,15 +190,15 @@ def main() -> int:
         st, data = outsider.json("GET", f"/api/v1/groups/{group_id}")
         check("outsider cannot read the group", st == 403, f"status={st}")
         st, data = outsider.json("POST", f"/api/v1/groups/{group_id}/chat",
-                                 {"message": "@wisp hello"})
+                                 {"message": f"@{AGENT_A} hello"})
         check("outsider cannot post to the group", st == 403, f"status={st}")
 
         # --- 7. two @mentions -> two agent turns -------------------------
-        print("  ... posting '@wisp @clawbie' (this runs two real agent turns)")
+        print(f"  ... posting '@{AGENT_A} @{AGENT_B}' (two real agent turns)")
         t0 = time.time()
         st, raw = member.call(
             "POST", f"/api/v1/groups/{group_id}/chat",
-            {"message": "@wisp @clawbie, reply with a one-line greeting and nothing else."},
+            {"message": f"@{AGENT_A} @{AGENT_B}, reply with a one-line greeting and nothing else."},
             accept="application/x-ndjson",
         )
         took = time.time() - t0
@@ -212,9 +214,9 @@ def main() -> int:
         finals = [e for e in events if e.get("type") == "final"]
         agents_that_ran = [e.get("agent") for e in finals]
         check("both mentioned agents took a turn",
-              set(agents_that_ran) == {"wisp", "clawbie"}, f"{agents_that_ran} in {took:.0f}s")
+              set(agents_that_ran) == {AGENT_A, AGENT_B}, f"{agents_that_ran} in {took:.0f}s")
         check("the first agent's turn comes first",
-              agents_that_ran == ["wisp", "clawbie"], str(agents_that_ran))
+              agents_that_ran == [AGENT_A, AGENT_B], str(agents_that_ran))
         for f in finals:
             text = (f.get("response") or {}).get("assistant", "")
             print(f"    {f.get('agent')}: {text[:110]}")
@@ -226,18 +228,18 @@ def main() -> int:
         check("the transcript has the human message + 2 agent replies", len(msgs) == 3,
               str(kinds))
         check("the agent replies are attributed",
-              ("agent", "wisp") in kinds and ("agent", "clawbie") in kinds, str(kinds))
+              ("agent", AGENT_A) in kinds and ("agent", AGENT_B) in kinds, str(kinds))
 
         # --- 9. the second agent saw the first agent's reply ------------
         # The prompt of the second agent is checked through the agent's
         # own turn table: the group conversation id is shared, and
-        # clawbie's turn must sit in the same conversation as wisp's.
+        # the second agent's turn must sit in the same conversation as the first's.
         with app.app_context():
             from app.agent.memory import MemoryAPI
             pool = app.extensions["harness"]["pool"]
             conv = group["conversation_id"]
             found = {}
-            for agent in ("wisp", "clawbie"):
+            for agent in (AGENT_A, AGENT_B):
                 mem = MemoryAPI(pool=pool, embedding_client=app.extensions["harness"]["embedding"],
                                 agent_name=agent, config=app.config["HARNESS_CONFIG_OBJ"])
                 with pool.connection() as conn, conn.cursor() as cur:
@@ -250,7 +252,7 @@ def main() -> int:
                     )
                     found[agent] = cur.fetchone()[0]
             check("both agents wrote their turns into the shared group conversation",
-                  found.get("wisp", 0) >= 2 and found.get("clawbie", 0) >= 2, str(found))
+                  found.get(AGENT_A, 0) >= 2 and found.get(AGENT_B, 0) >= 2, str(found))
 
         # --- 10. no mention -> no agent turn -----------------------------
         print("  ... posting a message with no @mention")
@@ -274,7 +276,7 @@ def main() -> int:
         group_conv = group["conversation_id"]
         marker = "dm-isolation-probe-" + str(int(time.time()))
         # (a) a DM turn for the same agent + same user
-        st, data = member.json("POST", "/api/v1/entities/wisp/chat",
+        st, data = member.json("POST", f"/api/v1/entities/{AGENT_A}/chat",
                                {"message": marker + " (direct message)"})
         check("a DM to the same agent works", st == 200, f"status={st}")
 
@@ -289,7 +291,7 @@ def main() -> int:
 
             # (b) the group conversation rows are flagged + unowned
             grows = rows(
-                "SELECT id, user_id, is_group, archived_at FROM wisp.conversations "
+                f"SELECT id, user_id, is_group, archived_at FROM {AGENT_A}.conversations "
                 "WHERE id = %s", (group_conv,))
             check("the group conversation exists in the agent's schema",
                   len(grows) == 1, f"{len(grows)} rows")
@@ -302,7 +304,7 @@ def main() -> int:
 
             # (c) the DM conversation is a DIFFERENT id, user-owned, not a group
             drows = rows(
-                "SELECT id, user_id, is_group FROM wisp.conversations "
+                f"SELECT id, user_id, is_group FROM {AGENT_A}.conversations "
                 "WHERE user_id = %s AND is_group = false AND archived_at IS NULL "
                 "ORDER BY updated_at DESC LIMIT 1", (member_id,))
             check("the DM has its own conversation row", len(drows) == 1,
@@ -318,10 +320,10 @@ def main() -> int:
                       drows[0]["is_group"] is False)
 
             # (d) "New conversation" must not archive the group conversation
-            st, data = member.json("POST", "/api/v1/entities/wisp/reset-conversation")
+            st, data = member.json("POST", f"/api/v1/entities/{AGENT_A}/reset-conversation")
             check("reset-conversation succeeds on a DM", st == 200, f"status={st}")
             grows2 = rows(
-                "SELECT archived_at FROM wisp.conversations WHERE id = %s",
+                f"SELECT archived_at FROM {AGENT_A}.conversations WHERE id = %s",
                 (group_conv,))
             check("reset-conversation did NOT archive the group conversation",
                   bool(grows2) and grows2[0]["archived_at"] is None,
@@ -334,7 +336,7 @@ def main() -> int:
               f"{len(data.get('messages', []))} messages")
 
         # (f) the DM chat view does NOT show the group's turns
-        st, data = member.json("GET", "/api/v1/entities/wisp/turns?limit=50")
+        st, data = member.json("GET", f"/api/v1/entities/{AGENT_A}/turns?limit=50")
         dm_turns = data.get("turns", [])
         dm_text = " ".join(t.get("content", "") for t in dm_turns)
         check("the DM chat view does not contain the group's message",

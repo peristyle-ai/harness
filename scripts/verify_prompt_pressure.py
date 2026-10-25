@@ -27,20 +27,21 @@ for agent in cfg.app.agents:
           f"({worst['pct']*100:.1f}%)" if worst else f"{agent}: no bootstrap")
 
 # Real permanent-memory usage, from the same call the loop makes.
-mem = ext["memory_registry"]["evie"]
+AGENT = os.environ.get("HARNESS_AGENT", "peribot")
+mem = ext["memory_registry"][AGENT]
 chunks, overflowed = mem.get_permanent()
 used = sum(len((c.content or "").split()) for c in chunks)
 cap = cfg.memory.permanent.max_tokens
 print(f"\nevie permanent memory: {used}/{cap} tokens "
       f"({100.0*used/cap:.1f}%) overflowed={overflowed}")
 
-# Now compose a REAL prompt for evie's real conversation and look for
+# Now compose a REAL prompt for the agent's real conversation and look for
 # the warning in the system message.
-conv = mem.get_or_create_persistent_conversation("evie", user_id=72)
+conv = mem.get_or_create_persistent_conversation(AGENT, user_id=72)
 ut = mem.get_turn(299)
 with app.app_context():
-    msgs = loop._compose_messages(conv, "evie", ut, mem,
-                                  ext["bootstrap_registry"].get("evie"))
+    msgs = loop._compose_messages(conv, AGENT, ut, mem,
+                                  ext["bootstrap_registry"].get(AGENT))
 system = msgs[0].content
 print(f"\n--- live system prompt: {len(system)} chars, "
       f"{len(msgs)} messages ---")
@@ -52,8 +53,8 @@ print("warning present at threshold 0.85:",
 loop.config = dataclasses.replace(
     cfg, prompt=dataclasses.replace(cfg.prompt, pressure_threshold=0.80))
 with app.app_context():
-    msgs2 = loop._compose_messages(conv, "evie", ut, mem,
-                                   ext["bootstrap_registry"].get("evie"))
+    msgs2 = loop._compose_messages(conv, AGENT, ut, mem,
+                                   ext["bootstrap_registry"].get(AGENT))
 sys2 = msgs2[0].content
 print("warning present at threshold 0.80:", "context_pressure" in sys2)
 if "context_pressure" in sys2:

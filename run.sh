@@ -45,7 +45,7 @@ mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/harness.log") 2>&1
 
 # Worker timeout raised 600 -> default 1800 on 2026-10-21 (per Mal).
-# A real Evie payroll turn reached iteration 12 with a 17k-char thinking
+# A real payroll turn reached iteration 12 with a 17k-char thinking
 # block and had not finished at 7 minutes; 600s was too tight for
 # legitimate long agentic runs. NOTE: gunicorn kills the WORKER and the
 # master respawns it, so systemd NRestarts does NOT move. Do not use

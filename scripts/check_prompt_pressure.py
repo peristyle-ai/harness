@@ -77,7 +77,7 @@ def apply(system_text, usage=None, chunks=None, overflowed=False,
             pressure_enabled=enabled))
     return AgentLoop._apply_prompt_pressure(
         loop, system_text,
-        agent_name="evie",
+        agent_name="peribot",
         agent_bootstrap=FakeBootstrap(usage or []),
         permanent_chunks=chunks or [],
         permanent_overflowed=overflowed)

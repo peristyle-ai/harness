@@ -13,7 +13,7 @@ import sys
 
 LIVE = "peristyle"
 TEST = "harness_init_test"
-AGENTS = ("wisp", "evie", "clawbie")
+AGENTS = tuple(os.environ.get("HARNESS_AGENTS", "peribot,second").split(","))
 
 
 def q(db, sql):
@@ -93,7 +93,7 @@ for schema in ("public",) + AGENTS:
         test = q(TEST, tmpl.format(schema=schema, public_tables=pt))
 
         # the agent_name column's DEFAULT: the live install carries
-        # 'wisp' in every agent's table (a copy-paste from the wisp
+        # the same table name in every agent's table (a copy-paste from one
         # schema). The init gives each agent its own name. The app always
         # passes agent_name explicitly, so the default is never used --
         # but the init is more correct, so the difference is expected.

@@ -17,13 +17,13 @@ hard rules:
      duration_ms, outcome (ok|blocked|confirm_required|error|timeout).
 
 Soft-flag flow (the LLM is taught this in the system prompt):
-  1. User asks wisp to do something destructive (e.g. restart harness)
-  2. Wisp calls exec_bash(command="systemctl --user restart harness")
+  1. User asks the agent to do something destructive (e.g. restart harness)
+  2. The agent calls exec_bash(command="systemctl --user restart harness")
   3. Tool returns {"ok": false, "requires_confirmation": true, "reason": "..."}
-  4. Wisp surfaces the reason to the user in chat: "this would kill
+  4. The agent surfaces the reason to the user in chat: "this would kill
      the chat surface — confirm?"
   5. User says "yes go ahead" (or "no, do X instead")
-  6. Wisp re-calls exec_bash(command="...", confirm=true)
+  6. The agent re-calls exec_bash(command="...", confirm=true)
   7. Tool runs the command, returns stdout/stderr/exit_code
 
 Working dir defaults to the operator's home. Output cap is 50KB per
