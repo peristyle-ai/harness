@@ -24,8 +24,10 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import secrets
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 try:
     import yaml
@@ -52,6 +54,43 @@ def load_install(path: Path) -> dict:
     if not (inst.get("embedding") or {}).get("base_url"):
         die("the install config is missing install.embedding.base_url")
     return inst
+
+
+# A value that still looks like the EXAMPLE's placeholder is a placeholder.
+# The example ships "sk-..." and "ep-...", which is NOT what "REPLACE_ME"
+# means -- so an operator who ran `grep REPLACE_ME .env` would not see the
+# LLM key, would ship the literal "sk-...", and would get an opaque 401
+# from the provider at runtime instead of a clear "fill this in".
+PLACEHOLDER_VALUES = {"", "sk-...", "ep-...", "REPLACE_ME", "changeme", "..."}
+
+
+def _is_placeholder(value: str) -> bool:
+    return (value or "").strip() in PLACEHOLDER_VALUES
+
+
+def _sh_quote(value: str) -> str:
+    """Quote a value for the .env, which is SOURCED BY BASH.
+
+    run.sh does `set -a; . ./.env; set +a`, so a value that is not a
+    bare shell word is a bug: a `$` would be expanded, a space would
+    split the line, and a quote would end it. Single quotes make the
+    value literal -- the only escape needed inside them is a quote
+    itself.
+    """
+    if value == "":
+        return ""
+    if re.fullmatch(r"[A-Za-z0-9_@%+=:,./-]+", value):
+        return value  # already safe unquoted
+    return "'" + value.replace("'", "'\''") + "'"
+
+
+def _gen_password() -> str:
+    """A password for a database role.
+
+    URL-safe so it can go straight into DATABASE_URL without encoding,
+    and shell-safe so the .env does not need quoting.
+    """
+    return secrets.token_urlsafe(18).replace("-", "_").replace("~", "_")
 
 
 def render_config(inst: dict) -> str:
@@ -83,26 +122,41 @@ def render_config(inst: dict) -> str:
     return src
 
 
-def render_env(inst: dict) -> str:
-    """The .env for this install."""
+def render_env(inst: dict) -> tuple[str, dict[str, str]]:
+    """The .env for this install, and the secrets generated into it.
+
+    The generated passwords are returned so the printed steps can
+    carry the exact CREATE ROLE commands -- the operator must not
+    have to copy a password between two places by hand.
+    """
     src = (ROOT / ".env.example").read_text()
     emb = inst["embedding"]
     agent = inst["agent_name"]
     db = inst["database"]
 
     def set_var(text: str, name: str, value: str) -> str:
+        # The value is quoted for bash: the .env is SOURCED, not parsed.
+        q = _sh_quote(value)
         if re.search(rf"^{re.escape(name)}=.*$", text, flags=re.M):
             return re.sub(
-                rf"^{re.escape(name)}=.*$", f"{name}={value}", text, count=1, flags=re.M,
+                rf"^{re.escape(name)}=.*$", lambda _m: f"{name}={q}",
+                text, count=1, flags=re.M,
             )
-        return text.rstrip() + f"\n{name}={value}\n"
+        return text.rstrip() + f"\n{name}={q}\n"
 
     # --- the install's own values -----------------------------------------
     llm = inst.get("llm") or {}
     if llm:
         src = set_var(src, "LLM_ADAPTER", llm.get("adapter", "minimax_m31_flash"))
-        src = set_var(src, "LLM_API_KEY", llm.get("api_key", "REPLACE_ME"))
-        src = set_var(src, "LLM_BASE_URL", llm.get("base_url", "REPLACE_ME"))
+        # A value that is still the EXAMPLE's placeholder is NOT a key.
+        # Leaving "sk-..." in place would sail past `grep REPLACE_ME .env`
+        # and fail at runtime with an opaque provider 401.
+        api_key = llm.get("api_key", "")
+        src = set_var(src, "LLM_API_KEY",
+                      "REPLACE_ME" if _is_placeholder(api_key) else api_key)
+        base_url = llm.get("base_url", "")
+        src = set_var(src, "LLM_BASE_URL",
+                      "REPLACE_ME" if _is_placeholder(base_url) else base_url)
         src = set_var(src, "LLM_MODEL", llm.get("model", "MiniMax-M3.1-Flash"))
         src = set_var(src, "LLM_MAX_TOKENS", str(llm.get("max_tokens", 524288)))
         src = set_var(src, "LLM_TIMEOUT_S", str(llm.get("timeout_s", 180)))
@@ -110,7 +164,9 @@ def render_env(inst: dict) -> str:
     src = set_var(src, "EMBEDDING_BASE_URL", emb["base_url"])
     src = set_var(src, "EMBEDDING_MODEL", emb.get("model", "Qwen/Qwen3-Embedding-4B"))
     src = set_var(src, "EMBEDDING_DIMENSIONS", str(emb.get("dimensions", 1024)))
-    src = set_var(src, "EMBEDDING_API_KEY", emb.get("api_key", ""))
+    emb_key = emb.get("api_key", "")
+    src = set_var(src, "EMBEDDING_API_KEY",
+                  "REPLACE_ME" if _is_placeholder(emb_key) else emb_key)
     src = set_var(src, "EMBEDDING_TIMEOUT_S", str(emb.get("timeout_s", 30)))
     src = set_var(src, "HARNESS_DEFAULT_AGENT", agent)
     src = set_var(src, "HARNESS_BIND", inst.get("bind", "127.0.0.1:5010"))
@@ -120,14 +176,54 @@ def render_env(inst: dict) -> str:
     src = set_var(src, "APP_DB_OPERATOR_ROLE", inst.get("operator_role", agent))
     src = set_var(src, "APP_DB_RUNTIME_ROLE", inst.get("runtime_role", f"{agent}_app"))
 
-    # --- the things the operator must choose -------------------------------
+    # --- the database passwords: GENERATED, not guessed -------------------
+    # The operator role's password and the runtime role's password are
+    # chosen here, not by the operator: they have to agree with the
+    # DATABASE_URL in this same file, and a human copying a password
+    # between two places gets it wrong. The .env is chmod 600 and is
+    # gitignored, so the passwords live there.
+    runtime_pw = _gen_password()
+    operator_pw = _gen_password()
+    runtime_role = inst.get("runtime_role", agent + "_app")
+
+    # Re-running the applier on an install that is ALREADY WORKING must
+    # not rotate the database password: the roles were created with the
+    # old one, so a new password in the .env locks the app out of its
+    # own database. So an existing, non-placeholder password is KEPT --
+    # and the operator password is kept with it, so the two still agree.
+    existing_dsn = ""
+    existing_op = ""
+    env_path = ROOT / ".env"
+    if env_path.exists():
+        try:
+            old_env = env_path.read_text()
+        except OSError:
+            old_env = ""
+        m = re.search(r"^DATABASE_URL=postgresql://[^:]+:([^@]*)@", old_env, re.M)
+        if m:
+            existing_dsn = m.group(1)
+        m = re.search(r"^APP_DB_OPERATOR_PASSWORD=(.+)$", old_env, re.M)
+        if m:
+            existing_op = m.group(1).strip().strip("'\"")
+    if existing_dsn and existing_dsn != "REPLACE_ME":
+        runtime_pw = existing_dsn
+        if existing_op:
+            operator_pw = existing_op
+
     src = set_var(src, "DATABASE_URL",
-                  f"postgresql://{inst.get('runtime_role', agent + '_app')}:"
-                  "REPLACE_ME@127.0.0.1:5432/" + db)
+                  f"postgresql://{runtime_role}:{quote(runtime_pw, safe='')}"
+                  "@127.0.0.1:5432/" + db)
+    src = set_var(src, "APP_DB_OPERATOR_PASSWORD", operator_pw)
+
+    # --- the things the operator must choose -------------------------------
     if not llm:
         src = set_var(src, "LLM_API_KEY", "REPLACE_ME")
         src = set_var(src, "LLM_BASE_URL", "REPLACE_ME")
-    src = set_var(src, "HARNESS_SECRET_KEY", "REPLACE_ME")
+    # The app's own secret: generated, because there is nothing to decide
+    # about it and a predictable one is a weak one.
+    src = set_var(src, "HARNESS_SECRET_KEY", secrets.token_hex(32))
+    # The TLS pair is the operator's: it is the certificate for THEIR
+    # hostname, so it cannot be generated here.
     src = set_var(src, "HARNESS_TLS_CERT", "REPLACE_ME")
     src = set_var(src, "HARNESS_TLS_KEY", "REPLACE_ME")
     src = set_var(src, "REVERIE_USER_EMAIL", inst.get("operator_email", ""))
@@ -145,7 +241,10 @@ def render_env(inst: dict) -> str:
             continue
         kept.append(line)
     src = "\n".join(kept) + "\n"
-    return src
+    return src, {
+        "runtime_password": runtime_pw,
+        "operator_password": operator_pw,
+    }
 
 
 def render_identity(inst: dict) -> dict:
@@ -204,6 +303,47 @@ def render_agent_schema(inst: dict) -> str:
     return text
 
 
+def print_next_steps(inst: dict, generated: dict[str, str]) -> None:
+    """Print the steps the operator still has to run, on this machine.
+
+    Kept separate from main() so it can be tested WITHOUT writing into
+    the checkout: main() writes config.yaml, .env and the identity files
+    into ROOT, and a test that did that would overwrite the repo.
+    """
+    agent = inst["agent_name"]
+    op_role = inst["operator_role"]
+    rt_role = inst.get("runtime_role", agent + "_app")
+    db = inst["database"]
+    print("Next (on this machine):")
+    print(f"  1. create the ROLES and the DATABASE, and install the EXTENSIONS")
+    print(f"     (once, as a superuser -- pgvector's vector extension is not a")
+    print(f"     trusted extension, so only a superuser may create it).")
+    print(f"     The passwords below are the ones already written into .env:")
+    print(f"       sudo -u postgres psql -c \"CREATE ROLE {op_role} LOGIN "
+          f"PASSWORD '{generated['operator_password']}';\"")
+    print(f"       sudo -u postgres psql -c \"CREATE ROLE {rt_role} LOGIN "
+          f"PASSWORD '{generated['runtime_password']}' NOSUPERUSER NOCREATEDB "
+          f"NOCREATEROLE;\"")
+    print(f"       sudo -u postgres psql -c \"CREATE DATABASE {db} OWNER {op_role};\"")
+    print(f"       sudo -u postgres psql -d {db} -f schema/extensions.sql")
+    print(f"  2. create the Python environment (the service runs from it):")
+    print(f"       python3 -m venv .venv")
+    print(f"       .venv/bin/pip install -r requirements.txt")
+    print(f"  3. fill in the remaining placeholders in .env (the LLM key, the")
+    print(f"     embedding key, the TLS certificate and key):")
+    print(f"       grep REPLACE_ME .env")
+    print(f"  4. apply the schema AND the runtime role's grants:")
+    print(f"       bash tools/migrate.sh {agent}")
+    print(f"  5. create the first admin:")
+    print(f"       .venv/bin/python3 tools/create_user.py --email you@example.com \\")
+    print(f"              --password '...' --role admin")
+    print(f"  6. start the harness (systemd --user):")
+    print(f"       mkdir -p ~/.config/systemd/user")
+    print(f"       cp systemd/harness.service ~/.config/systemd/user/")
+    print(f"       systemctl --user daemon-reload")
+    print(f"       systemctl --user enable --now harness.service")
+    print(f"  7. open http://{inst.get('bind', '127.0.0.1:5010')} and sign in")
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -218,9 +358,10 @@ def main() -> int:
     print(f"embedding      : {inst['embedding']['base_url']}")
     print(f"database       : {inst['database']} (schema {inst['schema']})")
 
+    env_text, generated = render_env(inst)
     writes = {
         ROOT / "config.yaml": render_config(inst),
-        ROOT / ".env": render_env(inst),
+        ROOT / ".env": env_text,
         ROOT / "schema" / f"{agent}_schema.sql": render_agent_schema(inst),
     }
     identity = render_identity(inst)
@@ -242,29 +383,7 @@ def main() -> int:
     except OSError:
         pass
 
-    print()
-    print("Next (on this machine):")
-    print(f"  1. create the database + the roles, and install the EXTENSIONS")
-    print(f"     (once, as a superuser -- pgvector's vector extension is not a")
-    print(f"     trusted extension, so only a superuser may create it):")
-    print(f"       sudo -u postgres psql -c \"CREATE DATABASE {inst['database']} "
-          f"OWNER {inst['operator_role']};\"")
-    print(f"       sudo -u postgres psql -d {inst['database']} "
-          f"-f schema/extensions.sql")
-    print(f"  2. fill in the placeholders in .env (the database password, the LLM")
-    print(f"     key + base URL, the app secret, the TLS paths):")
-    print(f"       grep REPLACE_ME .env")
-    print(f"  3. apply the schema AND the runtime role's grants:")
-    print(f"       bash tools/migrate.sh {agent}")
-    print(f"  4. create the first admin:")
-    print(f"       python3 tools/create_user.py --email you@example.com \\")
-    print(f"              --password '...' --role admin")
-    print(f"  5. start the harness (systemd --user):")
-    print(f"       mkdir -p ~/.config/systemd/user")
-    print(f"       cp systemd/harness.service ~/.config/systemd/user/")
-    print(f"       systemctl --user daemon-reload")
-    print(f"       systemctl --user enable --now harness.service")
-    print(f"  6. open http://{inst.get('bind', '127.0.0.1:5010')} and sign in")
+    print_next_steps(inst, generated)
     print()
     print("The agent's identity files (the sysadmin identity with the name "
           "filled in) are in:")

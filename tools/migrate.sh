@@ -11,19 +11,22 @@
 # The agents come from the install config, from the .env, or from the
 # command line.
 #
-# THREE FILES, IN THIS ORDER
-#   1. schema/extensions.sql  the extensions (once, as a superuser)
-#   2. schema/init.sql        the schema (per agent)
-#   3. schema/grants.sql      the runtime role's permissions (per agent)
+# TWO FILES, IN THIS ORDER
+#   1. schema/init.sql        the schema (per agent)
+#   2. schema/grants.sql      the runtime role's permissions (per agent)
 #
-# Step 1 is separate because pgvector's "vector" extension is NOT a
-# trusted extension -- only a superuser may create it -- and the schema
-# uses its halfvec type. On a database where the extensions already
-# exist, step 1 is a no-op and needs no privilege.
+# The THIRD file, schema/extensions.sql, is NOT run here: pgvector's
+# "vector" extension is NOT a trusted extension, so only a superuser may
+# create it, and this script runs as the OPERATOR role. The install
+# steps apply it once, as a superuser, before this script:
 #
-# Step 3 is separate because the runtime role's NAME is per-install
-# (harness_app, peribot_app, ...), so the grants cannot be baked into
-# the schema.
+#   sudo -u postgres psql -d <db> -f schema/extensions.sql
+#
+# On a database where the extensions already exist that step is a no-op.
+#
+# The grants are separate because the runtime role's NAME is per-install
+# (harness_app, peribot_app, ...), so they cannot be baked into the
+# schema.
 #
 # THE ROLE
 # The schema is applied as the OPERATOR role (APP_DB_OPERATOR_ROLE), not
