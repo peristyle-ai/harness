@@ -6,7 +6,7 @@
 # against a live database changes nothing.
 #
 #   tools/migrate.sh                 # every agent the install knows about
-#   tools/migrate.sh peribot peribot       # just these agents
+#   tools/migrate.sh peribot         # just these agents
 #
 # The agents come from the install config, from the .env, or from the
 # command line.
@@ -25,7 +25,7 @@
 # On a database where the extensions already exist that step is a no-op.
 #
 # The grants are separate because the runtime role's NAME is per-install
-# (harness_app, peribot_app, ...), so they cannot be baked into the
+# (harness_app, agent_app, ...), so they cannot be baked into the
 # schema.
 #
 # THE ROLE
@@ -47,7 +47,7 @@ if [ -f .env ]; then
 fi
 
 : "${DATABASE_URL:?DATABASE_URL not set (check .env)}"
-: "${APP_DB_OPERATOR_ROLE:=peristyle}"
+: "${APP_DB_OPERATOR_ROLE:=harness_operator}"
 : "${APP_DB_RUNTIME_ROLE:=harness_app}"
 
 # Parse host/port/db from URL.
@@ -92,6 +92,24 @@ agents = (cfg.get("app") or {}).get("agents") or []
 print(" ".join(str(a) for a in agents))
 PY
 )
+    elif [ -f config.yaml.example ]; then
+        # A fresh checkout has no config.yaml yet -- fall back to the
+        # template so the stock agent list still works.
+        AGENTS=$(python3 <<'PY'
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+try:
+    with open("config.yaml.example") as fh:
+        cfg = yaml.safe_load(fh) or {}
+except Exception:
+    sys.exit(0)
+agents = (cfg.get("app") or {}).get("agents") or []
+print(" ".join(str(a) for a in agents))
+PY
+)
     fi
     if [ -z "$AGENTS" ] && [ -n "${HARNESS_AGENTS:-}" ]; then
         AGENTS="$HARNESS_AGENTS"
@@ -100,7 +118,7 @@ fi
 
 if [ -z "$AGENTS" ]; then
     echo "No agents given and none configured. Pass them as arguments:" >&2
-    echo "  tools/migrate.sh peribot peribot" >&2
+    echo "  tools/migrate.sh peribot" >&2
     exit 1
 fi
 

@@ -32,14 +32,14 @@ from apply_install_config import (  # noqa: E402
 )
 
 INSTALL = {
-    "agent_name": "peribot",
+    "agent_name": "agent",
     "operator_name": "the operator",
     "operator_email": "operator@example.com",
     "operator_timezone": "UTC",
     "database": "harness",
-    "schema": "peribot",
-    "operator_role": "peribot",
-    "runtime_role": "peribot_app",
+    "schema": "agent",
+    "operator_role": "agent",
+    "runtime_role": "agent_app",
     "bind": "127.0.0.1:5010",
     "pie_root": "harness/pie",
     "embedding": {
@@ -54,13 +54,19 @@ INSTALL = {
 
 def test_the_config_has_only_this_installs_agent():
     cfg = render_config(INSTALL)
-    assert re.search(r"^  agents:\n  - peribot$", cfg, re.M)
+    assert re.search(r"^  agents:\n  - agent$", cfg, re.M)
     for other in ("peribot", "peribot", "peribot"):
         assert f"  - {other}" not in cfg, f"{other} is not part of this install"
     # the per-agent LLM block names env vars this install does not have
     assert "WISP_LLM_" not in cfg
     assert "EVIE_LLM_" not in cfg
-    assert "per_agent:" not in cfg
+    # No LIVE per_agent block. The stock template keeps one COMMENTED OUT as
+    # an example of the feature, so the test has to look for a live block
+    # rather than the word.
+    assert not re.search(r"^  per_agent:", cfg, re.M), (
+        "the rendered config has a live per_agent block -- it names env "
+        "vars this install does not have"
+    )
 
 
 def test_the_env_carries_the_remote_embedding_and_leaves_the_rest():
@@ -69,9 +75,9 @@ def test_the_env_carries_the_remote_embedding_and_leaves_the_rest():
     assert "EMBEDDING_API_KEY=ep_testkey" in env
     assert "EMBEDDING_MODEL=Qwen/Qwen3-Embedding-4B" in env
     assert "EMBEDDING_DIMENSIONS=1024" in env
-    assert "HARNESS_DEFAULT_AGENT=peribot" in env
+    assert "HARNESS_DEFAULT_AGENT=agent" in env
     assert "HARNESS_BIND=127.0.0.1:5010" in env
-    assert "APP_DB_RUNTIME_ROLE=peribot_app" in env
+    assert "APP_DB_RUNTIME_ROLE=agent_app" in env
     # the operator's own secrets are left as VISIBLE placeholders
     assert "LLM_API_KEY=REPLACE_ME" in env
     # and no other install's variables leak in
@@ -92,7 +98,7 @@ def test_the_database_passwords_are_generated_and_agree_with_the_dsn():
     assert generated["runtime_password"] != generated["operator_password"]
     # the runtime role's password is in the DSN, URL-encoded
     from urllib.parse import unquote
-    m = re.search(r"^DATABASE_URL=postgresql://peribot_app:([^@]*)@", env, re.M)
+    m = re.search(r"^DATABASE_URL=postgresql://agent_app:([^@]*)@", env, re.M)
     assert m, "the DSN is missing"
     assert unquote(m.group(1)) == generated["runtime_password"]
     # and the operator role's password is in its own variable
@@ -143,7 +149,7 @@ def test_a_placeholder_api_key_is_not_left_looking_like_a_key():
 
 
 def test_the_printed_steps_create_the_roles_before_the_database():
-    """`CREATE DATABASE ... OWNER peribot` FAILS if the role is missing.
+    """`CREATE DATABASE ... OWNER agent` FAILS if the role is missing.
 
     The step says "create the database + the roles" but used to print
     only the CREATE DATABASE, so a fresh install stopped dead on the
@@ -158,15 +164,15 @@ def test_the_printed_steps_create_the_roles_before_the_database():
     with contextlib.redirect_stdout(buf):
         print_next_steps(INSTALL, generated)
     out = buf.getvalue()
-    assert "CREATE ROLE peribot LOGIN" in out, out
-    assert "CREATE ROLE peribot_app LOGIN" in out, out
+    assert "CREATE ROLE agent LOGIN" in out, out
+    assert "CREATE ROLE agent_app LOGIN" in out, out
     assert "NOSUPERUSER" in out, "the runtime role must not be a superuser"
-    assert "CREATE DATABASE harness OWNER peribot" in out, out
+    assert "CREATE DATABASE harness OWNER agent" in out, out
     # the venv step -- the service runs from it
     assert "python3 -m venv .venv" in out, out
     assert "pip install -r requirements.txt" in out, out
     # the role creation must come BEFORE the database
-    assert out.index("CREATE ROLE peribot LOGIN") < out.index("CREATE DATABASE")
+    assert out.index("CREATE ROLE agent LOGIN") < out.index("CREATE DATABASE")
 
 
 def test_the_identity_is_the_sysadmin_one_with_the_name_filled_in():
@@ -174,7 +180,7 @@ def test_the_identity_is_the_sysadmin_one_with_the_name_filled_in():
     assert set(files) == {"AGENTS.md", "HEARTBEAT.md", "IDENTITY.md",
                           "MEMORY.md", "SOUL.md", "USER.md"}
     ident = files["IDENTITY.md"]
-    assert "peribot" in ident
+    assert "agent" in ident
     assert "sysadmin" in ident.lower()
     # no template braces left
     for name, text in files.items():
@@ -187,10 +193,10 @@ def test_the_identity_is_the_sysadmin_one_with_the_name_filled_in():
 
 def test_the_agent_schema_is_for_this_agent():
     sql = render_agent_schema(INSTALL)
-    assert 'CREATE SCHEMA IF NOT EXISTS "peribot"' in sql
+    assert 'CREATE SCHEMA IF NOT EXISTS "agent"' in sql
     assert "peribot" not in sql, "the template schema's name must be replaced"
-    assert '"peribot".conversations' in sql
-    assert '"peribot".turns' in sql
+    assert '"agent".conversations' in sql
+    assert '"agent".turns' in sql
     # the psql variable must be fully substituted -- an unsubstituted
     # :agent_name would make the file depend on how it is invoked. The
     # COMMENTS document the variable, so they are excluded.
@@ -198,7 +204,7 @@ def test_the_agent_schema_is_for_this_agent():
     assert ":agent_name" not in code
     assert ":'agent_name'" not in code
     # the agent's name must also be the default of its agent_name column
-    assert "DEFAULT 'peribot'::text" in sql
+    assert "DEFAULT 'agent'::text" in sql
 
 
 def test_an_install_config_without_the_required_keys_is_rejected(tmp_path):
@@ -242,7 +248,7 @@ def test_rerunning_the_applier_keeps_the_existing_database_password(tmp_path, mo
     original = env_path.read_text() if env_path.exists() else None
     try:
         env_path.write_text(
-            "DATABASE_URL=postgresql://peribot_app:keepthispassword@127.0.0.1:5432/harness\n"
+            "DATABASE_URL=postgresql://agent_app:keepthispassword@127.0.0.1:5432/harness\n"
             "APP_DB_OPERATOR_PASSWORD=keepthisoperator\n"
         )
         env, generated = render_env(INSTALL)

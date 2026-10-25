@@ -13,14 +13,14 @@ says everything that differs from a stock install:
 
 ```yaml
 install:
-  agent_name: peribot           # the agent's name (the default agent)
+  agent_name: agent             # the agent's name (the default agent)
   operator_name: the operator
   operator_email: operator@example.com
   operator_timezone: UTC
   database: harness
-  schema: peribot
-  operator_role: peribot
-  runtime_role: peribot_app
+  schema: agent
+  operator_role: agent
+  runtime_role: agent_app
   bind: 127.0.0.1:5010
   pie_root: harness/pie
   llm:
@@ -50,8 +50,8 @@ agent's schema SQL, and prints the remaining steps. See `README_INSTALL.md`.
 Copy the shape above, fill it in, and **keep it out of git**:
 
 ```bash
-cp install/peribot.example.yaml install/<customer>.yaml
+cp install/example.yaml install/<name>.yaml
 ```
 
-`install/peribot.example.yaml` (the version WITHOUT the secrets) is the
-tracked example.
+`install/example.yaml` (the version WITHOUT the secrets) is the tracked
+example.

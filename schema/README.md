@@ -40,7 +40,7 @@ exist, `init.sql`'s own `CREATE EXTENSION IF NOT EXISTS` lines are
 no-ops and need no privilege at all.
 
 **The grants are separate** because the runtime role's NAME is
-per-install (`harness_app`, `peribot_app`, …), so the grants cannot be
+per-install (`harness_app`, `agent_app`, …), so the grants cannot be
 baked into the schema: they are a psql variable, exactly like the
 agent's schema name. The grants give the runtime role DML on the
 agent's schema and on the shared public tables — and deliberately
