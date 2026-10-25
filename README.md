@@ -56,16 +56,65 @@ Everything else is the stock repo.
 git clone https://github.com/peristyle-ai/harness.git
 cd harness
 
-# 1. the config. Drop the prepared config.yaml into the clone and lock it
-#    down -- it holds the API keys and the database password.
 cp /path/to/the/config.yaml ./config.yaml
-chmod 600 config.yaml
+chmod 600 config.yaml        # it holds the API keys and the DB password
 
-# 2. the Python environment (the service runs from it)
+sudo ./install.sh
+```
+
+That is the whole install. `install.sh` takes everything it needs from
+`config.yaml` and does the rest:
+
+| step | what |
+|---|---|
+| 1 | checks the preconditions — root, `config.yaml`, the checkout's files |
+| 2 | makes the Python environment |
+| 3 | reads `config.yaml` and refuses to go on if it is not a working config |
+| 4 | creates the database roles, the database and the PostgreSQL extensions — as the postgres superuser |
+| 5 | applies the schema and the runtime role's grants — as the **operator** role, which owns the objects |
+| 6 | renders the agent's identity files, if they are not there yet |
+| 7 | creates the first admin |
+| 8 | installs and starts the systemd --user service |
+
+Every step is idempotent, and two of them are deliberately gentle: the
+roles' passwords are set from `config.yaml` (so the config and the
+database cannot drift apart), and the first admin is created **only** if
+that email does not already exist — re-running the install never changes
+an existing operator's password.
+
+The admin's password is generated and printed at the end, unless you pass
+your own:
+
+```bash
+sudo ./install.sh --admin-email you@example.com --admin-password '...'
+```
+
+`--dry-run` prints what it would do and changes nothing.
+
+### The config file
+
+There is **one** config file, and no `.env`. `config.yaml.example` is the
+tracked template — safe values, and `YOUR_..._HERE` where a secret
+belongs. `config.yaml` is your copy of it: not tracked, mode 0600, and the
+only file the app reads. The app **refuses to start** if it is readable by
+anyone else, if a required value is empty, or if a placeholder is still
+in it. `install.sh` runs that same check before it touches anything.
+
+A value that is exactly `${VAR}` is resolved from the process environment —
+the escape hatch for "this value comes from somewhere else" (a systemd
+credential, a container secret, a temporary rollback). A literal that merely
+*contains* `${` is left exactly as it is.
+
+### Doing it by hand
+
+The same steps, if you would rather run them yourself:
+
+```bash
+# 1. the Python environment (the service runs from it)
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# 3. the database, the roles and the extensions -- ONCE, as a superuser.
+# 2. the database, the roles and the extensions -- ONCE, as a superuser.
 #    pgvector's "vector" extension is not a *trusted* extension, so only a
 #    superuser may create it. The role names and passwords are in
 #    config.yaml (db.operator_role, db.operator_password, db.url).
@@ -74,13 +123,13 @@ sudo -u postgres psql -c "CREATE ROLE <runtime> LOGIN PASSWORD '<runtime passwor
 sudo -u postgres psql -c "CREATE DATABASE <db> OWNER <operator>;"
 sudo -u postgres psql -d <db> -f schema/extensions.sql
 
-# 4. the schema and the runtime role's grants. Idempotent.
+# 3. the schema and the runtime role's grants. Idempotent.
 bash tools/migrate.sh
 
-# 5. the first admin
-.venv/bin/python tools/create_user.py --email you@example.com --password '...' --role admin
+# 4. the first admin
+.venv/bin/python tools/create_user.py --email you@example.com --password '***' --role admin
 
-# 6. the service
+# 5. the service
 mkdir -p ~/.config/systemd/user
 cp systemd/harness.service ~/.config/systemd/user/
 systemctl --user daemon-reload
@@ -88,20 +137,6 @@ systemctl --user enable --now harness.service
 ```
 
 Then open `http://127.0.0.1:5010` and sign in.
-
-### The config file
-
-There is **one** config file, and no `.env`. `config.yaml.example` is the
-tracked template — safe values, and `YOUR_..._HERE` where a secret
-belongs. `config.yaml` is your copy of it: not tracked, mode 0600, and the
-only file the app reads. The app **refuses to start** if it is readable by
-anyone else, if a required value is empty, or if a placeholder is still in
-it.
-
-A value that is exactly `${VAR}` is resolved from the process environment —
-the escape hatch for "this value comes from somewhere else" (a systemd
-credential, a container secret, a temporary rollback). A literal that merely
-*contains* `${` is left exactly as it is.
 
 ### The schema
 
@@ -124,7 +159,8 @@ that need credentials and judgement.
 The identity files live in `pie/<agent>/identity/` and are read at the start
 of every turn, so the operator can edit them (the `SOUL.md` rules are the
 protected ones) and the change lands on the next turn — no restart. They
-are rendered from `agent_template/` with the agent's name filled in.
+are rendered from `agent_template/` with the agent's name filled in, and
+`install.sh` writes them only if they are not already there.
 
 ### Embeddings
 
@@ -168,6 +204,7 @@ harness/
 ├── config.yaml.example   the config template (committed)
 ├── config.yaml           this install's config (not committed, mode 0600)
 ├── pyproject.toml        the package metadata, the dependencies, the pytest config
+├── install.sh            the installer (run it as sudo)
 ├── run.sh                the gunicorn entrypoint
 └── LICENSE               MIT
 ```
