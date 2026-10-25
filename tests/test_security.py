@@ -10,6 +10,7 @@ Verifies:
 - Agent loop has the four MAX_* config attributes wired in
 - No f-string SQL anywhere in app/
 - Flask-Limiter is installed and has a default + per-route limits
+- The tool roster in SECURITY.md is the tool roster in the code
 """
 import logging
 import os
@@ -234,6 +235,89 @@ def test_agent_loop_has_max_tool_limits(config_path):
         "max_pins_per_turn", "max_unpins_per_turn",
     ):
         assert hasattr(cfg.agent, attr), f"cfg.agent missing {attr}"
+
+
+# --- The tool roster in SECURITY.md is the tool roster in the code ------
+#
+# SECURITY.md documents the ten tools the model can call -- including
+# exec_bash and sql_query, which reach the machine and the database.
+# That document is the only place an operator learns what the agent is
+# able to do, so it must not be able to drift away from the registry.
+#
+# The test reads the roster table OUT OF SECURITY.md and compares it to
+# the registry. Add a tool without documenting it and this fails; list a
+# tool that does not exist and this fails too.
+
+DOCUMENTED_ROSTER_ROW = re.compile(r"^\|\s*`([a-z0-9_]+)`\s*\|")
+
+
+def _documented_tools():
+    """The tool names listed in SECURITY.md's roster table."""
+    doc = Path(__file__).resolve().parents[1] / "SECURITY.md"
+    assert doc.exists(), "SECURITY.md is missing -- the tool roster must be documented"
+    names = []
+    in_table = False
+    for line in doc.read_text().splitlines():
+        if line.startswith("| Tool | What it does |"):
+            in_table = True
+            continue
+        if in_table:
+            if not line.startswith("|"):
+                break  # end of the table
+            if set(line) <= set("| -: "):
+                continue  # the separator row
+            m = DOCUMENTED_ROSTER_ROW.match(line)
+            if m:
+                names.append(m.group(1))
+    return names
+
+
+def test_the_documented_tool_roster_matches_the_registry():
+    from app.agent.tools.registry import names as registry_names
+
+    documented = _documented_tools()
+    assert documented, (
+        "SECURITY.md's tool roster table was not found or was empty -- "
+        "the roster table must start with a header row "
+        "'| Tool | What it does |'"
+    )
+
+    registered = set(registry_names())
+    documented_set = set(documented)
+
+    missing = registered - documented_set
+    assert not missing, (
+        "these tools are registered but not documented in SECURITY.md: "
+        f"{sorted(missing)}. The roster table in SECURITY.md is the "
+        "operator's only view of what the agent can do -- document them."
+    )
+
+    extra = documented_set - registered
+    assert not extra, (
+        "SECURITY.md documents tools that are not registered: "
+        f"{sorted(extra)}. Either the tool was removed or the doc is wrong."
+    )
+
+    assert len(documented) == len(documented_set), (
+        "SECURITY.md's roster table lists a tool twice"
+    )
+
+
+def test_the_two_reaching_tools_are_registered():
+    """exec_bash and sql_query reach the machine and the database.
+
+    They are the two tools that turn a prompt injection into a real
+    capability, so their absence is a security event, not a refactor:
+    the SECURITY.md text that describes them would be a lie.
+    """
+    from app.agent.tools.registry import names as registry_names
+
+    registered = set(registry_names())
+    for name in ("exec_bash", "sql_query"):
+        assert name in registered, (
+            f"the {name} tool is not registered -- if it was removed on "
+            "purpose, SECURITY.md must be updated in the same commit"
+        )
 
 
 # --- Live tests (require a running app + config) -------------------------
