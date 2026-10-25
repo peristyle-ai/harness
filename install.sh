@@ -277,11 +277,12 @@ say "5/8  the schema"
 if [ "$DRY_RUN" = "yes" ]; then
     info "would apply schema/init.sql and schema/grants.sql as $OPERATOR_ROLE"
 else
+    MIGRATE_OUT="$(mktemp)"
     as_user bash -c "cd '$REPO' && bash tools/migrate.sh" \
-        > "$REPO/.migrate.out" 2>&1 \
-        || { cat "$REPO/.migrate.out"; rm -f "$REPO/.migrate.out"; \
+        > "$MIGRATE_OUT" 2>&1 \
+        || { cat "$MIGRATE_OUT"; rm -f "$MIGRATE_OUT"; \
              die "the schema could not be applied — see the output above"; }
-    rm -f "$REPO/.migrate.out"
+    rm -f "$MIGRATE_OUT"
     info "the schema and the runtime role's grants are applied"
 fi
 
@@ -353,12 +354,13 @@ PYEOF
         else
             GENERATED_PASSWORD="no"
         fi
+        CREATE_OUT="$(mktemp)"
         as_user env DATABASE_URL="$DATABASE" "$PY" "$REPO/tools/create_user.py" \
               --email "$ADMIN_EMAIL" --password "$ADMIN_PASSWORD" --role admin \
-              > "$REPO/.create_user.out" 2>&1 \
-              || { cat "$REPO/.create_user.out"; rm -f "$REPO/.create_user.out"; \
+              > "$CREATE_OUT" 2>&1 \
+              || { cat "$CREATE_OUT"; rm -f "$CREATE_OUT"; \
                    die "could not create the admin — see the output above"; }
-        rm -f "$REPO/.create_user.out"
+        rm -f "$CREATE_OUT"
         info "admin         $ADMIN_EMAIL (created)"
     fi
 fi
