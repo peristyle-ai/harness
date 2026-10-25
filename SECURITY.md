@@ -29,10 +29,12 @@ please say so.
 
 **Do not open a public issue for a vulnerability.**
 
-Email **operator@example.com**, or use GitHub's private advisory form once
-the repository is public:
+Use GitHub's private advisory form — it is the reporting route for this
+repository, and it keeps the conversation private:
 
     https://github.com/peristyle-ai/harness/security/advisories/new
+
+You can also email **operator@example.com**.
 
 Please include:
 
@@ -356,18 +358,51 @@ chat UI sets them.
     every run**, so it is never silent, and
     `tests/test_check_no_secrets.py` pins the exemption list to that
     one path so it cannot grow quietly.
-- **GitHub's own secret scanning and push protection** are free on a
-  public repository. On a private repository they require a paid GitHub
-  Advanced Security subscription, so until this repository is public the
-  CI job above is the enforcement. When it is public, enable both on
-  the repository's Code security settings; the CI job stays as the
-  second layer.
+- **GitHub's own secret scanning and push protection are enabled.** Both
+  are free on a public repository and are *refused* on a private one
+  (GitHub's own words: *"Secret scanning is not available for this
+  repository."* — a private repository needs the paid GitHub Advanced
+  Security). They were switched on the moment the repository became
+  public.
+  - **What push protection actually blocks was measured, not assumed.**
+    Probing it with fabricated, format-valid tokens on throwaway
+    branches (all deleted immediately afterwards):
+
+    | blocked | not blocked |
+    |---|---|
+    | Stripe `sk_live_` / `sk_test_` | **GitHub** `ghp_` `gho_` `ghr_` `gha_` `ghu_` `ghs_` `github_pat_` |
+    | GitLab `glpat-` | **AWS** `AKIA…` |
+    | Twilio `SK` + 32 hex | **Google** `AIza…` |
+    | SendGrid `SG.` | **Anthropic** `sk-ant-…` |
+    | Mailgun `key-` + 32 hex | npm, PyPI, Discord, Shopify, DigitalOcean, Postman, JWT |
+    | Slack `xoxb-` (the canonical shape) | Slack `xoxb-` (a non-canonical shape) |
+
+    A blocked push comes back as
+    `! [remote rejected] … (push declined due to repository rule violations)`.
+  - **The gap is the reason the CI job above still exists.** Push
+    protection let a GitHub token, an AWS key, a Google key and an
+    Anthropic key through — and those are exactly the four credential
+    types this repository is most likely to be handed. The CI gate
+    covers all of them, on every push and every pull request, and it
+    fails the build.
+  - **Secret scanning covers more than push protection does.** It raised
+    alerts for the Google API keys that push protection had allowed
+    through, on branches that were deleted within the minute. It is
+    asynchronous, so an alert arrives minutes after the push — which is
+    why the CI gate, which is synchronous, is the one that stops it.
+  - The bypass list is **not** readable through the API; it is on the
+    repository's Code security settings page. Check it: anyone on it
+    can push a secret past push protection.
 - **Dependabot** is enabled: vulnerability alerts, automated security
   updates, and — through `.github/dependabot.yml` — version updates for
   the Python dependencies and the GitHub Actions. The Python
   dependencies are grouped into one pull request, because thirty
   separate pull requests for thirty pinned packages is a queue nobody
   reads.
+- **The repository is public**, so this file is the security policy the
+  Security tab shows, and the private advisory form is the reporting
+  route. The reporting route and the "do not test against anyone else's
+  install" rule are both in the section above.
 
 ---
 
