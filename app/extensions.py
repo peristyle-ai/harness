@@ -20,6 +20,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from psycopg_pool import ConnectionPool
 
 from .agent.bootstrap import BootstrapLoader, BootstrapRegistry
@@ -31,6 +32,54 @@ from .agent.tools import all_tools as _register_tools   # noqa: F401  (side-effe
 from .models.group import GroupStore
 
 log = logging.getLogger(__name__)
+
+
+def _extension_search_path(url: str) -> str:
+    """The search_path the pooled connections must use.
+
+    The harness's SQL refers to the extension-owned types UNQUALIFIED --
+    `%s::halfvec` -- because the schema they live in is not known until
+    the database is opened: pgvector's "vector" extension is installed
+    wherever its owner put it. On the machine this was written on that
+    was `public`, so the default search_path happened to work. Where
+    another project installed the extension first -- pgvector in the
+    mail server's schema, say -- the default search_path does NOT
+    contain it and every memory write fails with:
+
+        RuntimeError: UndefinedObject: type "halfvec" does not exist
+
+    So the schema is resolved from the live database and put on the
+    connection's search_path. The same thing schema/init.sql does for
+    the schema it creates.
+
+    A failure to resolve is not fatal: the default search_path is
+    correct when the extensions are in `public`, which is the common
+    case, and the app still starts.
+    """
+    try:
+        with psycopg.connect(url, connect_timeout=5) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT DISTINCT n.nspname
+                      FROM pg_extension e
+                      JOIN pg_namespace n ON n.oid = e.extnamespace
+                     WHERE e.extname IN ('vector', 'pg_trgm', 'citext')
+                    """
+                )
+                schemas = [r[0] for r in cur.fetchall()]
+    except Exception as e:  # noqa: BLE001 - never block the startup
+        log.warning("could not resolve the extension schemas (%s); "
+                    "using the default search_path", e)
+        return ""
+    if not schemas:
+        return ""
+    parts = ["public"] + [s for s in schemas if s != "public"]
+    # NO space after the comma: the string is handed to libpq as the
+    # connection's `options` (-c search_path=...), and libpq splits the
+    # options string on whitespace -- "public, mailbox" makes "mailbox"
+    # a separate option and the server rejects the connection.
+    return ",".join(parts)
 
 
 def _resolve_pie_root(config: Any) -> Path:
@@ -66,14 +115,21 @@ def build_extensions(config: Any) -> dict[str, Any]:
     # Tool side-effect import (registers memory_recall/pin/unpin).
     import app.agent.tools  # noqa: F401
 
+    # The search_path the pooled connections use, resolved from the live
+    # database so the extension-owned types resolve wherever they live.
+    search_path = _extension_search_path(config.db.url)
+    pool_kwargs: dict[str, Any] = {"autocommit": False}
+    if search_path:
+        pool_kwargs["options"] = f"-c search_path={search_path}"
     pool = ConnectionPool(
         config.db.url,
         min_size=1,
         max_size=4,
-        kwargs={"autocommit": False},
+        kwargs=pool_kwargs,
         open=True,
     )
-    log.info("db pool: opened (min=1, max=4)")
+    log.info("db pool: opened (min=1, max=4) search_path=%s",
+             search_path or "(default)")
 
     # Group chat store (2026-10-23) -- shares the same pool.
     group_store = GroupStore(pool)
