@@ -12,11 +12,11 @@ DESIGN (post-simplification)
   read-only-ish tools (memory_*, sql_query). Every call
   gets exactly one entry (after execution, with success/failure,
   duration, result summary).
-- build_dsn(db_name) — returns a libpq DSN for either 'harness'
-  or 'peristyle'. The harness DSN is read at first call from
-  the install dir/.env (peristyle has read access because
-  the harness service runs as peristyle). The peristyle DSN comes
-  from the operator's home/peristyle/.env. Cached for the process
+- build_dsn(db_name) — returns a libpq DSN for the install's own
+  database (by its name, or 'harness'/'install') or for 'peristyle'
+  (the operator's own databases, from the operator's home .env via
+  PG* variables). The install's DSN comes from the config's db.url,
+  handed over by create_app() at startup. Cached for the process
   lifetime so we don't re-read on every call.
 - exec_audit_log(...) — same shape but writes to
   the audit log dir exec_audit.jsonl (separate file
@@ -36,9 +36,9 @@ from pathlib import Path
 from typing import Any
 
 
-# Audit log: append-only JSON lines. One process, peristyle owns
-# the file. The directory is reused from the harness's existing
-# logging setup; if it's missing we create it.
+# Audit log: append-only JSON lines. One process, the install's Unix
+# user owns the file. The directory is reused from the harness's
+# existing logging setup; if it's missing we create it.
 from app.paths import HOME_DIR, LOG_DIR, SYSTEMD_DIR
 _AUDIT_DIR = LOG_DIR
 _AUDIT_FILE = _AUDIT_DIR / "tool_audit.jsonl"
@@ -136,12 +136,18 @@ _DSN_LOCK = threading.Lock()
 # config. The sql_query tool used to read DATABASE_URL out of the .env;
 # the config is the source of truth now.
 _HARNESS_DSN: str | None = None
+# The install's own database NAME. It is whatever the operator called it
+# (harness, polymed, ...), and the sql_query tool accepts it as a name
+# for the install's database -- so the agent can ask for the database it
+# was told about, whatever it is called.
+_INSTALL_DB_NAME = "harness"
 
 
-def set_harness_dsn(url: str) -> None:
-    """Record the harness database URL from the loaded config."""
-    global _HARNESS_DSN
+def set_harness_dsn(url: str, db_name: str = "harness") -> None:
+    """Record the harness database URL and name from the loaded config."""
+    global _HARNESS_DSN, _INSTALL_DB_NAME
     _HARNESS_DSN = url
+    _INSTALL_DB_NAME = db_name or "harness"
 
 
 def _harness_dsn() -> str:
@@ -155,9 +161,11 @@ def _harness_dsn() -> str:
 def build_dsn(db_name: str) -> str:
     """Return a libpq DSN for the named database.
 
-    Recognised names: 'harness' (the database the app itself talks to,
-    from the config's db.url) and 'peristyle' (from the operator's
-    home/peristyle/.env via PG* variables).
+    Recognised names:
+      - 'harness' / 'install' / the install's own database name: the
+        database the app itself talks to, from the config's db.url;
+      - 'peristyle': the operator's own databases, from the operator's
+        home .env via PG* variables.
 
     Cached for the process lifetime.
     """
@@ -166,7 +174,7 @@ def build_dsn(db_name: str) -> str:
     with _DSN_LOCK:
         if db_name in _DSN_CACHE:
             return _DSN_CACHE[db_name]
-        if db_name == "harness":
+        if db_name in ("harness", "install", _INSTALL_DB_NAME):
             _DSN_CACHE[db_name] = _harness_dsn()
         elif db_name == "peristyle":
             _DSN_CACHE[db_name] = _build_peristyle_dsn(
@@ -174,7 +182,8 @@ def build_dsn(db_name: str) -> str:
             )
         else:
             raise ValueError(
-                f"unknown db_name {db_name!r}; expected 'harness' or 'peristyle'"
+                f"unknown db_name {db_name!r}; expected the install's own "
+                "database or 'peristyle'"
             )
         return _DSN_CACHE[db_name]
 

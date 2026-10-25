@@ -66,10 +66,10 @@ requirements-frozen.txt
 # Python profiling
 .prof
 
-# Per-agent pie directory — each agent (peribot, peribot) is its own self-contained
+# Per-agent pie directory — each agent is its own self-contained
 # git repo under pie/<agent>/, with its own .git/ in place. The harness repo
 # only tracks the shared harness code; per-agent content lives in
-# peristyle-ai/<agent> repos.
+# that agent's own repo.
 pie/
 .env.bak-*
 # Local backups from the 2026-10-19 z.ai dispatch work
@@ -85,10 +85,12 @@ app/config.py.bak-2026-10-19-thinking
 test_repair_tmp.py
 uploads/
 
-# Per-customer install configs: they carry API keys, so they are never tracked.
-# The tracked example is install/example.yaml.
-install/*.yaml
-!install/example.yaml
+# Per-customer install material: a prepared config.yaml carries the
+# customer's API keys and passwords, so the whole folder is local-only.
+# It is untracked because the tracked tree must not carry a customer's
+# install -- and because a prepared install is ONE file (config.yaml),
+# not a folder of per-customer yaml.
+install/
 
 # The install's own config. config.yaml.example IS tracked (it is the
 # template); config.yaml is not -- it is this install's copy, edited in

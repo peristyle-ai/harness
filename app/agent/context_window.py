@@ -3,7 +3,7 @@
 WHY (2026-10-25): the agent loop replays the WHOLE turn on every model
 call, so a long tool-heavy turn grows the request without bound. The
 assistant's thinking blocks (~37 KB per response) and the tool results are
-echoed back every iteration. On 2026-10-25 Evie's turn reached ~1.4M
+echoed back every iteration. On 2026-10-25 a turn reached ~1.4M
 tokens in one request against MiniMax-M3.1-Flash's 1,000,000-token window
 and the API rejected it:
 

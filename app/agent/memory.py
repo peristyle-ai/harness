@@ -401,7 +401,7 @@ class MemoryAPI:
 
         `attachments` (Phase 10) is a list of small dicts describing
         image uploads the user attached to this turn; persisted to the
-        `attachments` jsonb column on peribot.turns. Pass None or [] for
+        `attachments` jsonb column on the agent's turns table. Pass None or [] for
         text-only turns.
 
         `trajectory` (Migration 011, 2026-10-19) is typically None for
@@ -430,14 +430,14 @@ class MemoryAPI:
         `attach_file` tool during this turn. Each entry is the same
         shape used for user uploads (url, filename, content_type,
         size). Persisted to the same `attachments` jsonb column on
-        peribot.turns so a page reload still shows the file-attachment
+        the turns table so a page reload still shows the file-attachment
         icons on the assistant's response.
 
         `trajectory` (Migration 011, 2026-10-19) is the full
         per-iteration trace built by the loop: {iterations: [...],
         total_iterations, total_tool_calls, tool_iterations,
         latency_ms}. Persisted to the `trajectory` jsonb column on
-        peribot.turns. The export.jsonl endpoint can include it for
+        the turns table. The export.jsonl endpoint can include it for
         LLM retraining pipelines that need the full thought + tool-use
         trace, not just the final text. If None, the row is written
         with trajectory = NULL (a legacy turn written before the

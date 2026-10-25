@@ -331,8 +331,7 @@ chat UI sets them.
 - The tracked `config.yaml.example` holds safe values with
   `YOUR_..._HERE` where a secret belongs. The install's own `config.yaml`
   is not tracked.
-- The per-install `install/<name>.yaml` files carry real keys and are
-  git-ignored.
+- A prepared install's `config.yaml` carries real keys and is git-ignored.
 - The redaction filter masks `Authorization: Bearer <token>` and
   `LLM_API_KEY=…` in every log record, in the message and in the
   arguments.

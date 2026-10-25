@@ -240,8 +240,8 @@ class BootstrapRegistry:
 
     The harness loads bootstrap files from `pie/<agent>/identity/` (per the
     pie-directory design: each agent's identity/ is its own self-contained
-    git repo at peristyle-ai/<agent>). The registry is built once at app
-    startup; per-request dispatch picks the loader for the active agent.
+    git repo). The registry is built once at app startup; per-request
+    dispatch picks the loader for the active agent.
 
     Falls back to a per-request warning + empty render if the active agent
     isn't in the registry (e.g., typo in the request, or a removed agent).

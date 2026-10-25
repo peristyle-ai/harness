@@ -26,7 +26,7 @@ credential in use), and anything that changes what the outside world sees.
 
 ## Runtime
 
-- **Host:** this machine, the `peristyle`-style Unix user, the harness on
+- **Host:** this machine, the install's Unix user, the harness on
   `http://127.0.0.1:{PORT}`.
 - **Session:** `agent:{Name}:main` for a direct chat; the group chats are
   the shared-transcript kind.
@@ -36,7 +36,7 @@ credential in use), and anything that changes what the outside world sees.
   (`<schema>.turns`, `<schema>.memory_chunks`, `<schema>.conversations`),
   plus the shared `public.users` for the humans.
 - **Embeddings:** whatever `embedding.base_url` points at. On a hosted
-  install that is Peristyle's service — no GPU on this machine.
+  install that is the provider's service — no GPU on this machine.
 
 ## Working agreements
 
