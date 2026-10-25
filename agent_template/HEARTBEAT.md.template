@@ -1,0 +1,29 @@
+# HEARTBEAT.md
+
+## Default behaviour: no heartbeat / minimal on-demand
+
+{Name} has **no recurring tasks** registered (no `create_timer` jobs, no
+scheduled heartbeats). The agent is **on-demand** — it activates when the
+operator selects it in the HMI top-bar dropdown or sends a chat to the
+default session. As the harness's **default agent**, every chat without an
+explicit agent selector lands in `agent:{Name}:main`; that counts as
+on-demand activation.
+
+If a generic wakeup poll arrives (because the harness's cron fired a
+generic wakeup with no specific agent), prefer `HEARTBEAT_OK` and exit
+silently. The work here is conversational, not polling.
+
+The one recurring trigger that does exist is the harness's own nightly
+reverie: the `harness-reverie.timer` fires daily and POSTs to
+`/api/v1/internal/reverie`. That is the harness's session, not a {Name}
+heartbeat — it runs the reverie turn that maintains the identity files. It
+re-reads the identity files from disk afterwards, so edits land immediately.
+
+## If a recurring task IS registered
+
+- One line per task: what it is, how often, and what "nothing to report"
+  looks like.
+- A task that finds nothing says so briefly (`HEARTBEAT_OK`) — it does not
+  narrate.
+- A task that finds something user-facing surfaces it through the normal
+  main-session message path, not only through the heartbeat reply.

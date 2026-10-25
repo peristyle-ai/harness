@@ -1,0 +1,78 @@
+# =============================================================================
+# install/peribot.example.yaml — the EXAMPLE install config (no secrets).
+#
+# Copy it to install/<customer>.yaml and fill it in. The per-customer file is
+# NEVER committed: it carries the customer's API keys. See install/README.md.
+#
+# Per Mal 2026-10-25: "create an install config file that i can email to him
+# along with the github url ... such that he can access an agent name peribot on
+# localhost (defined as a sysadmin ...)". This file is that file: everything
+# that differs from a stock install is IN here, and nothing else is.
+#
+# How it is used (the operator, on the machine):
+#
+#   git clone https://github.com/peristyle-ai/harness.git
+#   cd harness
+#   python3 tools/apply_install_config.py install/peribot.yaml
+#
+# That writes config.yaml, .env, the agent's identity files (the default
+# sysadmin identity, with the name filled in) and the agent's schema SQL,
+# and then tells you the handful of things left to do (the database, the
+# migrations, starting the service).
+#
+# The agent reaches the operator at http://127.0.0.1:5010 (loopback only).
+# The embeddings come from Peristyle's hosted service — this machine needs
+# NO GPU.
+# =============================================================================
+
+install:
+  # --- the agent ------------------------------------------------------------
+  # The name of the agent this install serves. It is the harness's DEFAULT
+  # agent, so a chat that does not name an agent lands here.
+  agent_name: peribot
+  # The identity comes from the default template (agent_template/), which is
+  # the SYSADMIN identity — the agent that is best equipped to set up
+  # tunnels, DNS and the rest of the machine's plumbing.
+  identity_template: agent_template
+
+  # --- the person this install is for ---------------------------------------
+  operator_name: the operator
+  operator_email: operator@example.com
+  operator_timezone: UTC
+  operator_business: their own business
+
+  # --- the database ---------------------------------------------------------
+  # The agent's schema + the two roles (the operator role owns the objects,
+  # the runtime role is DML-only). The database itself is shared by the
+  # install.
+  database: harness
+  schema: peribot
+  operator_role: peribot
+  runtime_role: peribot_app
+
+  # --- the service ----------------------------------------------------------
+  # Loopback only by default: the operator decides what, if anything, is
+  # exposed publicly.
+  bind: 127.0.0.1:5010
+  pie_root: harness/pie
+
+  # --- the language model ---------------------------------------------------
+  # The LLM the agent talks to. MiniMax's Anthropic-compatible endpoint.
+  llm:
+    adapter: minimax_m31_flash
+    api_key: sk-... # <- a secret, never committed
+    base_url: https://api.minimax.io/anthropic
+    model: MiniMax-M3.1-Flash
+    max_tokens: 524288
+    timeout_s: 180
+    temperature: 0.7
+
+  # --- the embedding provider ------------------------------------------------
+  # Peristyle's hosted embedding service. This is the whole point of the
+  # install: a machine with no GPU still gets real embeddings.
+  embedding:
+    base_url: https://embed.example.com/v1
+    api_key: sk-... # <- a secret, never committed
+    model: Qwen/Qwen3-Embedding-4B
+    dimensions: 1024
+    timeout_s: 30
