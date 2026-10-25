@@ -11,9 +11,12 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # pgvector's own image, not the vanilla postgres one: schema/init.sql
+        # needs CREATE EXTENSION "vector", and the official image does not
+        # ship pgvector.
+        image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: harness
+          POSTGRES_USER: postgres
           POSTGRES_PASSWORD: password
           POSTGRES_DB: harness
         ports: ["5432:5432"]
@@ -51,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           export PGPASSWORD=password
-          for agent in wisp evie; do
+          for agent in wisp evie clawbie; do
             psql -h localhost -U postgres -d harness -v ON_ERROR_STOP=1 \
                  -v "agent_name=$agent" -f schema/init.sql
           done
