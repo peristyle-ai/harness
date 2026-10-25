@@ -131,6 +131,20 @@ def render_env(inst: dict) -> str:
     src = set_var(src, "HARNESS_TLS_CERT", "REPLACE_ME")
     src = set_var(src, "HARNESS_TLS_KEY", "REPLACE_ME")
     src = set_var(src, "REVERIE_USER_EMAIL", inst.get("operator_email", ""))
+
+    # The per-agent LLM overrides belong to the OTHER agents: render_config
+    # dropped config.yaml's llm.per_agent block (this install has one
+    # agent), so the .env must not carry another agent's variables either.
+    # A var named <AGENT>_LLM_* is dropped unless <AGENT> is this
+    # install's agent.
+    own = f"{agent.upper()}_LLM_"
+    per_agent = re.compile(r"^[A-Z0-9_]+_LLM_[A-Z0-9_]+=")
+    kept = []
+    for line in src.splitlines():
+        if per_agent.match(line) and not line.startswith(own):
+            continue
+        kept.append(line)
+    src = "\n".join(kept) + "\n"
     return src
 
 
@@ -230,17 +244,27 @@ def main() -> int:
 
     print()
     print("Next (on this machine):")
-    print(f"  1. create the database + the roles:")
+    print(f"  1. create the database + the roles, and install the EXTENSIONS")
+    print(f"     (once, as a superuser -- pgvector's vector extension is not a")
+    print(f"     trusted extension, so only a superuser may create it):")
     print(f"       sudo -u postgres psql -c \"CREATE DATABASE {inst['database']} "
           f"OWNER {inst['operator_role']};\"")
     print(f"       sudo -u postgres psql -d {inst['database']} "
-          f"-v agent_name={agent} -f schema/init.sql")
+          f"-f schema/extensions.sql")
     print(f"  2. fill in the placeholders in .env (the database password, the LLM")
     print(f"     key + base URL, the app secret, the TLS paths):")
     print(f"       grep REPLACE_ME .env")
-    print(f"  3. apply the schema:  bash tools/migrate.sh {agent}")
-    print(f"  4. start the harness (systemd --user): see systemd/ in the repo")
-    print(f"  5. open http://{inst.get('bind', '127.0.0.1:5010')} and sign in")
+    print(f"  3. apply the schema AND the runtime role's grants:")
+    print(f"       bash tools/migrate.sh {agent}")
+    print(f"  4. create the first admin:")
+    print(f"       python3 tools/create_user.py --email you@example.com \\")
+    print(f"              --password '...' --role admin")
+    print(f"  5. start the harness (systemd --user):")
+    print(f"       mkdir -p ~/.config/systemd/user")
+    print(f"       cp systemd/harness.service ~/.config/systemd/user/")
+    print(f"       systemctl --user daemon-reload")
+    print(f"       systemctl --user enable --now harness.service")
+    print(f"  6. open http://{inst.get('bind', '127.0.0.1:5010')} and sign in")
     print()
     print("The agent's identity files (the sysadmin identity with the name "
           "filled in) are in:")

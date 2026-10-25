@@ -22,12 +22,28 @@ That writes:
 
 Then the operator finishes the job (the applier prints these):
 
-1. create the database + the roles, and apply the agent's schema
+1. create the database + the roles, and install the **extensions** (once,
+   as a superuser — pgvector's `vector` extension is not a *trusted*
+   extension, so only a superuser may create it):
+
+   ```bash
+   sudo -u postgres psql -d <db> -f schema/extensions.sql
+   ```
+
 2. fill in the `REPLACE_ME` placeholders in `.env` (the database password,
    the LLM key + base URL, the app secret, the TLS paths)
-3. apply the shared migrations (`bash tools/migrate.sh`)
-4. start the service (the unit is in `systemd/`)
-5. open `http://127.0.0.1:5010` and sign in
+3. apply the schema **and the runtime role's grants** (`bash tools/migrate.sh`)
+4. create the first admin (`python3 tools/create_user.py --email … --password … --role admin`)
+5. start the service:
+
+   ```bash
+   mkdir -p ~/.config/systemd/user
+   cp systemd/harness.service ~/.config/systemd/user/
+   systemctl --user daemon-reload
+   systemctl --user enable --now harness.service
+   ```
+
+6. open `http://127.0.0.1:5010` and sign in
 
 ### The default identity is a sysadmin
 
