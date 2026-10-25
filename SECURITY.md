@@ -1,150 +1,449 @@
 # Security
 
-Harness security model, threat surface, mitigations, and operational notes.
+The security model of the Peristyle Harness: what it trusts, what it does
+not, what an attacker can and cannot reach, and where the boundaries are
+thin enough that you should know about them before you deploy it.
 
-> Phase 8 (2026-10-08): initial security sweep. Phase 9 (production sign-off + OSS readiness) gates public release.
+This document describes **the code as it is**. If a claim here does not
+match what you read in `app/`, the code is right and this file is wrong —
+please say so.
+
+- [Reporting a vulnerability](#reporting-a-vulnerability)
+- [Threat model](#threat-model)
+- [The tool roster](#the-tool-roster)
+- [Authentication and sessions](#authentication-and-sessions)
+- [Authorisation and data isolation](#authorisation-and-data-isolation)
+- [Input handling](#input-handling)
+- [Rate limiting](#rate-limiting)
+- [Response headers](#response-headers)
+- [Secrets](#secrets)
+- [Logging and audit trails](#logging-and-audit-trails)
+- [Backups](#backups)
+- [OWASP Top 10 mapping](#owasp-top-10-mapping)
+- [Known limitations](#known-limitations)
+- [Audit tests](#audit-tests)
+
+---
+
+## Reporting a vulnerability
+
+**Do not open a public issue for a vulnerability.**
+
+Email **michael@peristyle.ai**, or use GitHub's private advisory form once
+the repository is public:
+
+    https://github.com/peristyle-ai/harness/security/advisories/new
+
+Please include:
+
+- what an attacker can do, and what they need in order to do it;
+- the affected file or route;
+- a reproduction — a request, a prompt, or a set of steps;
+- what you believe the impact is.
+
+What to expect: an acknowledgement within a few days, and a fix or an
+assessment of severity. If the report is accepted, the fix ships as a
+commit and the advisory is published after a release has gone out.
+
+**Please do not test against anyone else's install.** The harness is
+single-tenant: every user of an install shares one Postgres database and
+one set of agent schemas. If you find a way to read another user's
+conversation, that is a real finding — report it, do not exercise it
+further than you need to.
+
+### Supported versions
+
+| Version | Supported |
+|---|---|
+| `main` | yes |
+| any tagged release | security fixes only |
+
+There is no LTS branch. Fixes land on `main`.
+
+---
 
 ## Threat model
 
 ### Trusted
 
-- The host machine (`localhost`). The `peristyle` Unix user has no `sudo` by default.
-- The Postgres server (peer-auth, no password exposure).
-- The shared GPU embedding server (`127.0.0.1:8080`, LAN-only).
-- The LLM API endpoints (auth via API key in `.env`).
+- **The host machine.** The harness runs as an ordinary Unix user with no
+  `sudo`. Everything it can do, an operator logged in as that user could
+  do too.
+- **Postgres.** Peer/scram auth on localhost; the runtime role is
+  DML-only.
+- **The embedding endpoint.** Configured by the operator; treated as
+  trusted infrastructure.
+- **The model API.** Authenticated with the operator's key. The *model* is
+  **not** trusted — its output is treated as untrusted input, and it is the
+  thing most likely to be attacked through prompt injection.
+- **The operator.** They hold the secrets and they own the machine.
 
 ### Not trusted
 
-- **The chat surface itself** — anyone with the URL can send messages. v0 has no auth.
-- **User-provided message content** — untrusted input. Treated as the prompt-injection surface.
-- **Tool output** — we display tool results to the model. Compromise of `MemoryAPI` or the embedding service could let an attacker inject context.
-- **The shared LLM API** — third party. We assume prompt-injection resilience; we do not assume the LLM is harmless.
-- **The `.env` file** — contains `LLM_API_KEY` and `DATABASE_URL`. Mode 600 enforced at startup; checked by `sanity_check_env()`.
+- **Chat messages.** Every user message is untrusted input and the primary
+  prompt-injection surface.
+- **Model output.** Assistant text is rendered as HTML in the browser, so
+  it is sanitised (see [Input handling](#input-handling)) and never
+  interpolated into a SQL string or a shell command.
+- **Tool output.** Tool results go back to the model, so a compromised tool
+  can inject context. The memory API is the boundary: the agent loop never
+  sees SQL.
+- **Uploaded files.** User-supplied content with a size cap and a MIME
+  allowlist — but it is still user content.
+- **The `.env` file** — contains the model key, the database URL and the
+  session secret. Mode 600, enforced at startup.
 
 ### What an attacker can do
 
-- Send arbitrary messages to the agent (tool-use only, no exec / no file / no network).
-- Read every public web response (chat UI, JSON, `/health`).
-- Attempt prompt-injection: trick the agent into pinning or unpinning wrong chunks, or talking about things it shouldn't.
+- Sign in as a user (if they have credentials or steal a session).
+- Send any message to any agent they can reach.
+- Read and write their own conversations and memories.
+- Upload files.
+- Try prompt injection: talk the agent into revealing another user's
+  memory, into calling a tool it should not, or into running a command it
+  should ask about first.
+- Read anything that is served without authentication — see
+  [the public surface](#the-public-surface).
 
-### What an attacker CANNOT do (by design)
+### What an attacker cannot do (by design)
 
-- **Execute code on the server.** The agent has no `tools.exec`; the only tools are `memory_recall` / `memory_pin` / `memory_unpin`. The LLM cannot read files, browse the web, or run shell.
-- **Access other tenants' data.** Harness is single-tenant under `peristyle`; per-agent schema isolation prevents cross-agent reads.
-- **Read API keys from logs.** `KeyRedactionFilter` masks `LLM_API_KEY= ***` and `Authorization: Bearer ***` patterns in every log record.
-- **Exfiltrate the database via the agent.** The LLM has no SQL surface — it calls `MemoryAPI` methods, which enforce parametric queries and rate caps.
-- **Bypass rate limits by sending 1000 requests/sec.** Flask-Limiter caps `/api/v1/chat` at 30/min/IP and `/api/v1/memories/*` at 60/min/IP, in-memory process-wide.
-- **Make the LLM blow up the system with infinite tool loops.** Agent loop caps at `MAX_TOOL_ITERATIONS=5` and per-tool caps (`MAX_SEARCHES_PER_TURN=5`, `MAX_PINS_PER_TURN=3`, `MAX_UNPINS_PER_TURN=5`).
-- **Saturate the model API with concurrent calls.** `asyncio.Semaphore(config.agent.max_concurrent_llm=8)` caps concurrency.
+- **Escalate to root.** `exec_bash` runs in the harness process's own
+  user context, and `sudo` / `su` are hard-blocked by the command
+  classifier.
+- **Write to the database through the agent.** All SQL is parametric
+  (`%s` placeholders) and the read-only `sql_query` tool refuses anything
+  that is not a `SELECT`.
+- **Write to the database through the web app.** The runtime role has DML
+  only — no `CREATE`, `DROP` or `ALTER`.
+- **Read another agent's memories** — each agent has its own Postgres
+  schema and its own tables. The one shared table is `public.users`.
+- **Read the API keys out of the logs** — the redaction filter masks the
+  two patterns that matter (see the limitation below).
+- **Read the secrets out of `exec_bash`'s environment** — the tool runs
+  with a scrubbed environment; variables whose names look secret-shaped
+  are removed before the subprocess starts.
+- **Run an unbounded tool loop.** The agent loop caps the iterations per
+  turn, and there is a concurrency cap on in-flight model calls.
 
-## OWASP top-10 mapping
+### The public surface
 
-| Risk | Mitigation in harness |
+These endpoints are reachable without a session:
+
+| Route | Why |
 |---|---|
-| A01 Broken Access Control | No auth in v0 (planned v0.2). Public chat only; no admin endpoints without per-request token. |
-| A02 Cryptographic Failures | TLS at CF edge. `.env` mode 600 enforced. API keys never logged (KeyRedactionFilter). |
-| A03 Injection (SQL) | All SQL uses `psycopg` `%s` placeholders. **No f-string SQL anywhere in `app/`** (enforced by `tests/test_security.py::test_no_fstring_sql`). |
-| A03 Injection (prompt) | Model has no `tools.exec` / no file / no network. System prompt anchored (no-execution / no-browsing). LLM can only call `memory_recall` / `pin` / `unpin`. |
-| A04 Insecure Design | Single-purpose design: chat + memory. No plugin system. No file upload. No exec. Threat-model documented here. |
-| A05 Security Misconfiguration | `sanity_check_env()` refuses to start if `.env` is world-readable, has empty required keys, or has a `***…` placeholder. CSP/HSTS/X-Frame-Options set on every response. |
-| A06 Vulnerable Components | Hand-curated `requirements.txt` with upper bounds. No transitive trust on model APIs. |
-| A07 Identification & Auth Failures | n/a in v0 (no auth). When added: argon2/bcrypt, session cookies httpOnly+secure+SameSite=strict. |
-| A08 Software & Data Integrity | Bootstrap files re-read on mtime change (operator edits pick up next prompt). Per-agent schema installer is idempotent. |
-| A09 Security Logging | Per-request `X-Request-Id` for log correlation. `memory_audit` table for every MemoryAPI call. Append-only. No retention policy (per Mal 2026-10-08). |
-| A10 Server-Side Request Forgery | No outbound HTTP from the agent loop. Embedding + LLM are configured singletons with hard-coded URLs in `.env`. |
+| `GET /health` | liveness |
+| `GET /`, `GET /c/<entity>`, `GET /g/<group>` | the HTML shells — the data behind them is fetched from authenticated APIs |
+| `GET /api/v1/entities/<name>/icon` | so an `<img>` tag can load an agent's avatar without credentials |
+| `POST /api/v1/internal/*` | service-to-service, gated on a shared token, not on a session |
 
-## Defenses in depth
+Everything else needs a session, and the admin views additionally need the
+`admin` role.
 
-1. **No tools.exec** (per MEMORY.md `notifyOnExit` lesson). The agent cannot run shell.
-2. **No file access** (no `read`/`write` tool). Bootstrap files are loaded at app startup, not via tool call.
-3. **Parametric SQL only**. `MemoryAPI` is the safety boundary; the agent loop never sees SQL.
-4. **Schema isolation**. `public.users` is the only shared table. Per-agent schemas (`wisp`) have their own `memory_chunks`, `turns`, `conversations`, `memory_audit`.
-5. **Runtime role = DML only**. `harness_app` cannot `CREATE`/`DROP`/`ALTER`. DDL is operator role (`peristyle`).
-6. **LLM-API key never logged**. `KeyRedactionFilter` masks `LLM_API_KEY= ***` and `Authorization: Bearer ***` patterns in any log record (msg + args).
-7. **Rate limiting at the Flask boundary**. `/api/v1/chat` = 30/min/IP, `/api/v1/memories/*` = 60/min/IP. In-memory process-wide (single gunicorn worker).
-8. **Per-tool rate limits inside the loop**. `MAX_SEARCHES_PER_TURN=5`, `MAX_PINS_PER_TURN=3`, `MAX_UNPINS_PER_TURN=5`. Even if Flask-Limiter is bypassed, the loop enforces.
-9. **Concurrent LLM cap**. `asyncio.Semaphore(max_concurrent_llm=8)` around `adapter.complete()`. Prevents one slow request from monopolizing the worker.
-10. **Per-request `X-Request-Id`**. Every response carries the id; the access log line includes it. Trace a request from CF edge to tool result with one identifier.
-11. **CSP** with `default-src 'self'`. Inline styles allowed (chat UI uses them) but no inline scripts, no external sources.
+---
 
-## Operational notes
+## The tool roster
 
-### Backups
+**This is the part to read carefully.** The harness gives the model real
+tools, including ones that touch the machine and the database. A prompt
+injection is a way of *asking* the model to use them, so the controls
+below are the actual security boundary — not the model.
 
-`tools/backup.sh` does daily `pg_dump` to `/media/mal/Expansion/Workspace backup/harness/`, sha256-manifested, 14-day retention. Wire as a systemd --user timer in Phase 9.
+There are ten tools:
 
-### Key rotation
+| Tool | What it does |
+|---|---|
+| `memory_recall` | search this agent's memories (vector + trigram) |
+| `memory_recent` | list this agent's recent long-form memories |
+| `memory_pin` | pin a memory so it is injected into every prompt |
+| `memory_unpin` | unpin a memory |
+| `memory_write` | write a long-form memory |
+| `memory_update` | amend a long-form memory in place |
+| `memory_delete` | delete a memory (hard delete; cascades to its chunks) |
+| `sql_query` | run a **read-only** `SELECT` against the harness database |
+| `exec_bash` | run a **shell command** as the harness's Unix user |
+| `attach_file` | copy a file from the operator's home into the uploads directory |
 
-- `LLM_API_KEY` lives in `/opt/harness/harness/.env` (mode 600).
-- Rotate by editing the file, then `sudo -u peristyle systemctl --user restart harness.service`.
-- Old keys remain valid until revoked at the provider. Plan a quarterly rotation.
+Every memory operation is written to the agent's `memory_audit` table.
+Every shell command is written to `exec_audit.jsonl`.
 
-### .env placement
+### `exec_bash`
 
-The harness-wide `harness/.env` is for shared infrastructure secrets only
-(LLM keys, DB URLs, TLS material, rate-limit config, internal tokens). It is
-gitignored and never committed; mode 0600 enforced at startup.
+Three controls, in order:
 
-**Per-pie secrets** (anything scoped to a single agent — e.g. one agent's
-email credentials, a per-pie API key) live in that pie's own .env at:
+1. **The environment is scrubbed.** The subprocess gets a whitelist of
+   ordinary environment variables (`PATH`, `HOME`, `TZ`, …) plus
+   `HARNESS_BIND` and `HARNESS_CONFIG`. Anything whose name contains
+   `KEY`, `SECRET`, `PASSWORD`, `TOKEN`, `CREDENTIAL` or `AUTH` is
+   dropped, so the model cannot `printenv` its way to the model key.
+2. **The command is classified.**
+   - *Hard block* — refused outright: `sudo`, `su`, `rm -rf /`, `mkfs`,
+     `dd of=/dev/…`, writes to `/dev/sd*`, fork bombs, `curl|sh` and
+     `wget|sh`, anything touching `/etc/passwd`, `/etc/shadow`,
+     `/etc/sudoers` or `/etc/systemd/system/`, `chmod` with setuid/setgid
+     bits, `chmod 777`, and `systemctl mask|disable` of a *system* unit.
+   - *Soft flag* — refused **unless the operator confirms**: recursive
+     `chmod`, `rm -rf` inside an uploads directory, and stopping,
+     restarting or disabling the harness's own services (which would kill
+     the chat surface the operator is talking to). The tool returns
+     `requires_confirmation: true`, and the agent is instructed to ask in
+     chat and re-call with `confirm=true` only after the operator agrees.
+3. **Everything is logged.** The full command, the working directory, the
+   exit code, the byte counts and the outcome land in
+   `exec_audit.jsonl`. Output is capped at 50 KB per stream and the
+   timeout is 30 s by default, 120 s at most.
 
-    pie/<pie_name>/.env
+### `sql_query`
 
-That file is also gitignored, must be mode 0600, and is loaded by the pie's
-own `env_loader.py` (e.g. `pie/evie/scripts/env_loader.py`) with
-`override=False`. That means: values already in the real process environment
-(from `harness/.env` at startup) still win, but pie-specific secrets flow in
-from the pie's own .env. This isolates secrets between agents (wisp, clawbie,
-evie, ...) that all operate in the same unix user session — agent A can't
-read agent B's secrets even if both share the harness process.
+Read-only, enforced by a pattern matcher: any statement containing a write
+verb (`INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `CREATE`, `TRUNCATE`,
+`GRANT`, `REVOKE`, `COPY`, `VACUUM`, `REINDEX`, `CLUSTER`, `LOCK`, `CALL`,
+`DO`) is refused, as is a multi-statement string. A 30 s
+`statement_timeout` is applied, the result is capped at 1000 rows and
+50 KB.
 
-### Logging
+**The matcher is a regex, not a SQL parser.** It refuses the obvious
+write verbs at the top level; it is not proof that a statement is
+read-only. It also reads from the whole database, not from one schema —
+see [Known limitations](#known-limitations).
 
-Logs go to journald (`journalctl --user -u harness.service`). The `KeyRedactionFilter` runs on every record before it's emitted. To verify:
+### `attach_file`
 
-```bash
-sudo -u peristyle journalctl --user -u harness.service \
-    | grep -E 'sk-[A-Za-z0-9_-]{8,}|Authorization.*Bearer'
-# (no output = no leaks)
-```
+Copies a file from under the operator's home into the uploads directory so
+the chat UI can render an attachment icon. It is the one tool that reads
+the filesystem, and it is bounded to the operator's home.
 
-### Rate limit bypass
+---
 
-If a single client needs to make more than 30 chat requests per minute (e.g. a CI job), it should rotate source IPs or use a different identifier. Flask-Limiter uses `get_remote_address` (peer IP) as the key by default; X-Forwarded-For is honored if `app.config["RATELIMIT_HEADERS_ENABLED"] = True` (we don't enable this for v0 — CF edge already rate-limits).
+## Authentication and sessions
+
+- Sessions are Flask-Login sessions backed by `public.users`.
+- Passwords are hashed with Werkzeug's `pbkdf2:sha256` — 600 000
+  iterations, 16-byte salt. The hash is never serialised into a JSON
+  response.
+- The session cookie is `Secure`, `HttpOnly` and `SameSite=Lax`, and lives
+  for 30 days.
+- API routes use `@login_required_json`, which returns `401` with a JSON
+  body rather than a redirect.
+- **CSRF**: `SameSite=Lax` stops cross-origin form posts, and every
+  state-changing request (`POST`, `PUT`, `DELETE`, `PATCH`) is additionally
+  checked against the `Origin` header. A request whose `Origin` host does
+  not match the `Host` is refused with `403`. Requests with no `Origin`
+  header are allowed — that is what `curl` and server-to-server clients
+  send.
+- The service-to-service routes (`/api/v1/internal/*`) authenticate with
+  the `X-Harness-Token` header, which must equal `HARNESS_INTERNAL_TOKEN`.
+- Admin views check the user's role as well as their session.
+
+---
+
+## Authorisation and data isolation
+
+- **One schema per agent.** An agent's conversations, turns, memories,
+  chunks and audit rows live in `<agent>.*`. Adding an agent is
+  `CREATE SCHEMA <agent>` plus a schema seed — not a new user, a new
+  process or a new deployment.
+- **`public.users` is the only shared table.** It holds the accounts.
+- **The runtime role is DML-only.** The operator role owns the schema and
+  does the DDL; the role the app connects as cannot create, drop or
+  alter anything. `ALTER DEFAULT PRIVILEGES` grants the runtime role
+  rights on tables the operator creates later.
+- **Conversations are user-scoped.** A conversation lookup filters on the
+  owning user, so two users never see each other's conversations with the
+  same agent.
+- **Group chats are shared on purpose.** In a group, every participating
+  agent sees the group's transcript — that is the feature. Group
+  conversations are flagged `is_group = TRUE` and are excluded from the
+  DM lookup paths, so a DM can never load a group's transcript.
+
+---
+
+## Input handling
+
+- **SQL**: every statement in `app/` uses `psycopg`'s `%s` placeholders.
+  This is enforced by a test, not by convention — see
+  [Audit tests](#audit-tests).
+- **Uploads**: capped at `HARNESS_MAX_UPLOAD_BYTES` (10 MiB by default),
+  restricted to an allowlist of MIME types, stored under a UUID-prefixed
+  name, and served back through a route that only accepts a
+  `<32-hex>.<allowed-ext>` filename.
+- **Agent avatars**: uploaded through `PUT /api/v1/entities/<name>/icon`,
+  capped at 2 MiB, restricted to image MIME types, and stored outside the
+  tracked tree.
+- **Model output → HTML**: assistant text is parsed by `marked` and then
+  sanitised by `DOMPurify` before it reaches the page. If `DOMPurify` is
+  unavailable the UI refuses to render the unsanitised HTML rather than
+  falling back to it. Both libraries are vendored in `app/static/` (see
+  `app/static/THIRD_PARTY_NOTICES.md`) so the page needs no third-party
+  origin and the CSP stays `default-src 'self'`.
+- **Shell commands and SQL**: see [the tool roster](#the-tool-roster).
+
+---
+
+## Rate limiting
+
+Flask-Limiter, in-memory, fixed-window, keyed on the remote address.
+
+| Scope | Default |
+|---|---|
+| every route | 100/minute |
+| chat routes | 30/minute |
+| memory routes | 60/minute |
+
+`RATE_LIMIT_DEFAULT`, `RATE_LIMIT_CHAT` and `RATE_LIMIT_MEMORY` set them.
+
+Two consequences worth knowing: the storage is **per process**, so a
+multi-worker deployment allows *N* times the limit, and a restart resets
+every counter. If you run more than one worker, move the limiter to
+Redis (`storage_uri`).
+
+---
+
+## Response headers
+
+Every response carries:
+
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'` |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Strict-Transport-Security` | `max-age=15552000; includeSubDomains` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+
+There are **no inline scripts** — `script-src 'self'` with no
+`unsafe-inline` — which is why the vendored libraries are served from
+this origin rather than a CDN. Inline *styles* are allowed, because the
+chat UI sets them.
+
+---
+
+## Secrets
+
+- `.env` holds the model key, the database URL, the session secret, the
+  internal token and the TLS paths. It is git-ignored and must be mode
+  `0600`.
+- **The app refuses to start** if `.env` is world-readable, if
+  `HARNESS_SECRET_KEY`, `LLM_API_KEY` or `DATABASE_URL` is empty, or if
+  `LLM_API_KEY` still holds a `***…` placeholder. That check is
+  `security.sanity_check_env()` and it runs at startup.
+- The tracked `config.yaml` contains only `${VAR}` references. The
+  per-install `install/<name>.yaml` files carry real keys and are
+  git-ignored.
+- The redaction filter masks `Authorization: Bearer <token>` and
+  `LLM_API_KEY=…` in every log record, in the message and in the
+  arguments.
+
+---
+
+## Logging and audit trails
+
+| What | Where |
+|---|---|
+| HTTP access + a per-request id | the service log; `X-Request-Id` on every response |
+| every memory operation | the agent's `memory_audit` table |
+| every shell command | `exec_audit.jsonl` next to the install |
+| tool calls generally | `tool_audit.jsonl` |
+
+`X-Request-Id` is taken from the request if the client supplies one and
+generated otherwise, so a single id ties a CF edge request to a tool
+result.
+
+---
+
+## Backups
+
+`tools/backup.sh` takes a `pg_dump` of the harness database, writes a
+sha256 manifest beside it, and prunes anything older than 14 days. Point
+it at a directory of your choosing:
+
+    bash tools/backup.sh /path/to/backup/dir
+
+It is not scheduled by the repo — wire it to a `systemd --user` timer
+yourself. A backup that is not restored from is not a backup.
+
+---
+
+## OWASP Top 10 mapping
+
+| Risk | Mitigation |
+|---|---|
+| **A01 Broken Access Control** | Session auth on every data route (`@login_required_json`), role checks on the admin views, user-scoped conversation lookups, per-agent schema isolation, a shared-token check on the internal routes. |
+| **A02 Cryptographic Failures** | TLS at the edge, HSTS, `pbkdf2:sha256` password hashing, `Secure`/`HttpOnly`/`SameSite` cookies, `SECRET_KEY` from the environment. |
+| **A03 Injection (SQL)** | Parametric SQL everywhere in `app/`; enforced by `tests/test_security.py::test_no_fstring_sql`. The read-only tool refuses write verbs. |
+| **A03 Injection (prompt)** | The model is not a boundary. The tools are: command classification, read-only SQL, a scrubbed environment, a scrubbed model output path, and the soft-flag confirmation flow. |
+| **A04 Insecure Design** | Single-purpose design; a documented and deliberately limited tool roster; a documented threat model; an explicit public surface. |
+| **A05 Security Misconfiguration** | `sanity_check_env()` refuses to start on a world-readable `.env`, an empty key or a leftover placeholder. The security headers are applied to every response. |
+| **A06 Vulnerable Components** | A hand-curated `requirements.txt` with upper bounds; two vendored browser libraries with their licences recorded in `app/static/THIRD_PARTY_NOTICES.md`. |
+| **A07 Identification & Auth Failures** | `pbkdf2:sha256` with a per-user salt, 30-day sessions, an `Origin` check plus `SameSite=Lax` for CSRF, 401 JSON for the API. |
+| **A08 Software & Data Integrity** | Idempotent schema installation; bootstrap identity files are re-read per turn so an operator edit takes effect on the next turn; the audit trails above. |
+| **A09 Security Logging** | `X-Request-Id` on every request, the `memory_audit` table, `exec_audit.jsonl`, and the log redaction filter. |
+| **A10 SSRF** | The agent loop makes no outbound HTTP of its own. The embedding and model endpoints are operator-configured singletons. |
+
+---
+
+## Known limitations
+
+These are real, and none of them is fixed today.
+
+1. **`sql_query` is not sandboxed by a real SQL parser.** It refuses
+   write verbs with a regex. A statement crafted to hide a write from
+   that regex is the obvious attack, and the regex is the only thing
+   standing in the way. It also reads from *any* table in the database,
+   including `public.users` — which holds password hashes. If that
+   matters for your install, remove the tool or scope it to a schema.
+2. **`exec_bash` is a command filter, not a sandbox.** It runs as the
+   harness's Unix user. The hard-block list is a set of regexes; a
+   dangerous command that is not on the list will run. The real
+   containment is the Unix user's own permissions — so **run the harness
+   as a user with no `sudo` and no secrets of its own**, and treat the
+   agent as being able to do anything that user can do.
+3. **The confirmation flow is a prompt-level control.** When a command is
+   soft-flagged, the tool returns `requires_confirmation: true` and the
+   *agent* is expected to ask the operator before re-calling with
+   `confirm=true`. Nothing enforces that the operator actually said yes.
+   Treat it as a speed bump, not a gate.
+4. **Log redaction covers two patterns.** `Authorization: Bearer …` and
+   `LLM_API_KEY=…`. A credential in a differently-named variable, or one
+   that has been base64-encoded, will reach the log. Nothing logs request
+   bodies, which is what keeps this survivable.
+5. **Rate limiting is per process and in memory.** Multiple workers mean
+   multiple times the limit; a restart clears the counters.
+6. **The internal token is compared with `!=`,** not a constant-time
+   comparison. The practical risk is low, but it is not free of a timing
+   side channel.
+7. **Everything shares one database.** Users, agents and groups live in
+   one Postgres instance with one set of schemas. The isolation between
+   users is enforced in the application layer, not by the database.
+8. **The `Origin` check allows requests with no `Origin` header,** which
+   is what a non-browser client sends. That is deliberate — the API is
+   meant to be callable — but it means CSRF protection rests on
+   `SameSite=Lax` for browser-originated requests.
+9. **Avatar and upload endpoints are unauthenticated on read.** The icon
+   endpoint is public on purpose so an `<img>` tag works; an upload is
+   served only to a signed-in user, but the icon is not.
+
+---
 
 ## Audit tests
 
 ```bash
-# Off the dev box (no live model):
-pytest tests/test_security.py
-
-# Live (requires running harness on the prod endpoint):
-HARNESS_RUN_LIVE_TESTS=1 pytest tests/test_security.py
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests/test_security.py -v
 ```
 
-Tests cover:
-- `KeyRedactionFilter` (msg + args, LLM key + Bearer)
-- `sanity_check_env` (world-readable, placeholder, empty, happy)
-- All `app/` files free of f-string SQL
-- `cfg.agent` exposes the four MAX_* attributes
-- Live: security headers on `/health`, `/`, `/api/v1/conversations`
-- Live: `/health` body has no key-shape leaks
-- Live: `X-Request-Id` round-trips
+The suite needs a Postgres instance and the environment variables in
+`.env.example`. It covers:
 
-## Production sign-off checklist (Phase 9)
+- the redaction filter (message and arguments, model key and bearer token);
+- `sanity_check_env()` — world-readable file, placeholder value, empty
+  value, and the happy path;
+- that no file under `app/` contains f-string SQL;
+- that the security headers are present on every response;
+- that `X-Request-Id` round-trips;
+- that the tool roster matches what this document says it is.
 
-- [ ] Run `pytest tests/test_security.py -v`; all green
-- [ ] Run live integration test: `HARNESS_RUN_LIVE_TESTS=1 pytest tests/test_security.py`
-- [ ] Run `python -m bandit -r app/` (or equivalent) — no high-severity issues
-- [ ] Verify no LLM_API_KEY leak: tail `journalctl --user -u harness.service` for 24h, grep for `sk-…`
-- [ ] Wire `tools/backup.sh` to a systemd --user timer (daily, 02:00 AEST)
-- [ ] Verify `pg_dump` works end-to-end (one-shot manual run, then check the file)
-- [ ] Document `.env` rotation procedure in operator runbook
-- [ ] Confirm public repo has no secrets in git history (`git log -p | grep -E 'sk-[A-Za-z0-9]{20,}'` → empty)
+The live tests skip themselves when the harness is not running:
 
-## Open for Phase 9
-
-- Rate limiting storage: in-memory is fine for single gunicorn worker. If we ever go multi-worker, switch to Redis (`storage_uri="redis://..."`).
-- Per-route rate limit is currently applied via a `before_request` check. Cleaner would be a decorator on each route function. The current approach is correct but more verbose.
-- API key rotation runbook not yet in OPERATIONS.md (will be added with the backup runbook in Phase 9).
-- Log redaction is regex-based. A real exfil vector would be base64-encoded keys, which our regex won't catch. Mitigation: never log response bodies (we currently log `e.response.text[:500]` on HTTP errors — could leak a key in the error body). The MiniMax error responses don't contain keys, but other providers might. TODO: redact any string of length >= 30 that matches `^[A-Za-z0-9_-]{30,}$` from log records.
+```bash
+HARNESS_RUN_LIVE_TESTS=1 python -m pytest tests/test_security.py -v
+```
