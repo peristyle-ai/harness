@@ -335,6 +335,33 @@ chat UI sets them.
 - The redaction filter masks `Authorization: Bearer <token>` and
   `LLM_API_KEY=…` in every log record, in the message and in the
   arguments.
+- **No secret is committed.** `scripts/check_no_secrets.py` scans the
+  working tree, every blob in every commit, and the commit messages, and
+  it runs as a CI job on every push and every pull request
+  (`.github/workflows/tests.yml`, the `secret-scan` job). It fails the
+  build on a provider-format key (an API key, a GitHub token, an AWS key,
+  a private key block), and it fails closed: if it cannot scan
+  something, it reports INCONCLUSIVE and exits non-zero rather than
+  reporting a clean result.
+  - It looks at the **history**, not just the current files. Deleting a
+    committed secret does not un-leak it, so a scan of the working tree
+    alone would miss exactly the case that matters.
+  - The scanner is pinned by `tests/test_check_no_secrets.py`, which
+    plants secrets in a throwaway repository and asserts they are
+    caught -- including one that is committed and then deleted, and one
+    that only ever appears in a commit message.
+- **GitHub's own secret scanning and push protection** are free on a
+  public repository. On a private repository they require a paid GitHub
+  Advanced Security subscription, so until this repository is public the
+  CI job above is the enforcement. When it is public, enable both on
+  the repository's Code security settings; the CI job stays as the
+  second layer.
+- **Dependabot** is enabled: vulnerability alerts, automated security
+  updates, and — through `.github/dependabot.yml` — version updates for
+  the Python dependencies and the GitHub Actions. The Python
+  dependencies are grouped into one pull request, because thirty
+  separate pull requests for thirty pinned packages is a queue nobody
+  reads.
 
 ---
 

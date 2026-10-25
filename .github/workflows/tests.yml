@@ -6,6 +6,29 @@ on:
   pull_request:
 
 jobs:
+  secret-scan:
+    # GitHub's own secret scanning and push protection need a paid
+    # Advanced Security subscription on a PRIVATE repository, and are
+    # free once it is public. Until then this job is the enforcement:
+    # it fails the build if a secret was committed.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The whole history, not a shallow clone: a secret that was
+          # committed and then deleted is still in the history, and
+          # deleting the file does not un-leak it. GitHub's own secret
+          # scanning looks at the same thing.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: no secret was committed
+        run: python scripts/check_no_secrets.py
+
   pytest:
     runs-on: ubuntu-latest
 
