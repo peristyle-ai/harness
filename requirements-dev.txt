@@ -1,0 +1,4 @@
+# Test-only dependencies. The CI workflow (and the README / CONTRIBUTING
+# guides) install these alongside requirements.txt. Without this file the
+# "install the dependencies" step fails before pytest ever runs.
+pytest>=8.0
