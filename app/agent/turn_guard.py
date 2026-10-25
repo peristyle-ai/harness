@@ -64,6 +64,91 @@ _REGISTRY: dict[str, "TurnState"] = {}
 _REGISTRY_LOCK = threading.RLock()
 _INSTALLED = False
 
+# --- the interrupted-marker claim -------------------------------------
+# The "interrupted" marker must be written EXACTLY ONCE per turn. The
+# obvious guard -- "has this state already got an interrupted id?" --
+# is a check-then-act across a database write, and it is NOT atomic:
+# two callers can both read "no id yet" and both write.
+#
+# That is not hypothetical. On 2026-10-26 09:12:44 a service restart
+# during a live turn left TWO identical assistant rows (ids 196 and
+# 197) in peribot.turns: same content, byte-identical trajectories,
+# and the second row's computed latency_ms was ONE MILLISECOND SMALLER
+# than the first's -- which is only possible if the two callers
+# interleaved: one computed its timestamp first, the other committed
+# first.
+#
+# The claim is keyed by (conversation, request id) rather than by the
+# TurnState object, because two TurnState objects can exist for one
+# turn (the registry holds the newest; a superseded request thread
+# still holds its own), and the marker must still be unique.
+#
+# The entry is written BEFORE the database write and replaced with the
+# turn id after it, so a failed write can hand the claim back.
+_INTERRUPT_CLAIMS: dict[tuple[str, str], int] = {}
+# An RLock, not a plain Lock: the claim helpers must be callable from
+# code that already holds it (a plain Lock deadlocks on re-entry, and
+# the bounded table's eviction path makes that easy to do by
+# accident).
+_INTERRUPT_CLAIM_LOCK = threading.RLock()
+
+# How many claims to keep. The dict only needs to outlive the turn it
+# belongs to; a turn's marker is written at most a second or two after
+# the turn starts. The cap is a backstop against unbounded growth, not
+# the primary bound.
+_MAX_INTERRUPT_CLAIMS = 512
+
+
+def claim_interrupt(conv_id: Any, request_id: Any) -> tuple[bool, int | None]:
+    """Claim the right to write the interrupted marker for this turn.
+
+    Returns (claimed, existing_turn_id). Exactly one caller ever gets
+    (True, None) for a given (conversation, request id); every other
+    caller gets (False, <the turn id that was written>).
+
+    The claim is taken BEFORE the write, so two concurrent callers
+    cannot both proceed. The returned turn id is -1 while the write is
+    still in flight.
+    """
+    key = (str(conv_id), str(request_id or ""))
+    with _INTERRUPT_CLAIM_LOCK:
+        existing = _INTERRUPT_CLAIMS.get(key)
+        if existing is not None:
+            return False, (existing if existing > 0 else None)
+        if len(_INTERRUPT_CLAIMS) >= _MAX_INTERRUPT_CLAIMS:
+            # Drop the oldest claim. Dict order is insertion order.
+            _INTERRUPT_CLAIMS.pop(next(iter(_INTERRUPT_CLAIMS)))
+        _INTERRUPT_CLAIMS[key] = -1
+        return True, None
+
+
+def complete_interrupt(conv_id: Any, request_id: Any, turn_id: int) -> None:
+    """Record the turn id of the marker that was written."""
+    key = (str(conv_id), str(request_id or ""))
+    with _INTERRUPT_CLAIM_LOCK:
+        _INTERRUPT_CLAIMS[key] = turn_id
+
+
+def release_interrupt(conv_id: Any, request_id: Any) -> None:
+    """Hand the claim back so a later caller can retry.
+
+    Only used when the write itself failed -- otherwise the turn would
+    have no marker at all, which is the failure this whole mechanism
+    exists to prevent.
+    """
+    key = (str(conv_id), str(request_id or ""))
+    with _INTERRUPT_CLAIM_LOCK:
+        if _INTERRUPT_CLAIMS.get(key) == -1:
+            del _INTERRUPT_CLAIMS[key]
+
+
+def interrupt_already_written(conv_id: Any, request_id: Any) -> bool:
+    """Has an interrupted marker already been claimed for this turn?"""
+    key = (str(conv_id), str(request_id or ""))
+    with _INTERRUPT_CLAIM_LOCK:
+        return key in _INTERRUPT_CLAIMS
+
+
 # How many NDJSON events to keep per in-flight turn. The browser
 # replays these to rebuild the live bubble after a refresh; the tail
 # is what matters, so the oldest are dropped first.

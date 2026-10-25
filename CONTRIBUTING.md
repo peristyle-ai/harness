@@ -60,3 +60,53 @@ Do not open a public issue for a vulnerability. See
 
 By contributing you agree that your contribution is licensed under the MIT
 license of this project.
+
+## Proposing a change
+
+`main` is protected. Nobody pushes to it: a change lands on `main` only as a
+merged pull request, with one approval from a code owner and both CI jobs
+green.
+
+If you are an agent working in an installation of this repository, the path
+is:
+
+```bash
+scripts/agent_propose.sh start <slug>                  # make a worktree
+# ... make the change in the worktree it prints ...
+scripts/agent_propose.sh push <slug> "<title>" ["<body>"]
+```
+
+`start` creates a **git worktree** rather than checking a branch out in the
+working tree. The working checkout may be a live installation whose service
+is running from it; checking a branch out there would change the code under
+the running service.
+
+`push` commits the change, bumps the patch version in `pyproject.toml`, and
+pushes the branch. Pushing a branch named `agent/**` (or `fix/**`) makes the
+`agent-pr` workflow open a pull request for it.
+
+### Why the workflow opens the pull request
+
+The agents here hold a **deploy key**, which is a git credential: it can push
+a branch but it cannot talk to the API at all. If an agent were given an API
+token instead, it could open a pull request as an account that could also
+approve it.
+
+So the pull request is opened by a workflow using the repository's own
+`GITHUB_TOKEN`, which makes its author `github-actions[bot]`. The bot is not
+a code owner and cannot approve its own pull request, so the pull request
+waits for a code owner — and only a code owner can merge it. **An agent
+cannot merge its own work.**
+
+### The version is the release
+
+The version in `pyproject.toml` is the released version, and every pull
+request that lands on `main` is a release — so the patch version is bumped as
+part of the change (`0.1.0` → `0.1.1`). The diff shows the bump rather than
+hiding it, and a merge into `main` *is* the release.
+
+### If your pull request changes a workflow file
+
+GitHub holds the workflow run for approval rather than running it, because a
+pull request that changes a workflow is changing the thing that runs it. A
+maintainer approves the run and the checks continue.
