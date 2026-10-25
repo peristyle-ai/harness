@@ -83,6 +83,15 @@ PLACEHOLDER = re.compile(
     r"ci-not-a-real-[a-z-]*|not-a-real-[a-z-]*|your-[a-z-]*)$",
     re.I)
 
+# A value that is WRAPPED IN A TEMPLATE is a placeholder, whatever is
+# inside it: `<password>` in a README example, `{runtime_pw}` in an
+# f-string, `${VAR}` in a config. A real credential is never spelled
+# that way -- it is a bare value -- so recognising the shape does not
+# weaken the gate. Before this, the gate failed on the repository it
+# guards: the README's own connection-string example and the
+# installer's own f-string were both read as leaked passwords.
+TEMPLATED = re.compile(r"^(?:<[^<>]+>|\{[^<>{}]+\}|\$\{[^<>{}]+\})$")
+
 
 def run(cmd: list[str]) -> str:
     return subprocess.run(cmd, capture_output=True, text=True,
@@ -112,7 +121,7 @@ def scan_text(text: str, where: str, findings: list) -> None:
         for m in rx.finditer(text):
             value = m.group(1) if m.groups() else m.group(0)
             value = value.strip()
-            if PLACEHOLDER.match(value):
+            if PLACEHOLDER.match(value) or TEMPLATED.match(value):
                 continue
             path = where.split(":", 1)[-1] if ":" in where else where
             if is_exempt(path):
