@@ -21,6 +21,42 @@ Run it once per agent:
 bash tools/migrate.sh wisp evie clawbie
 ```
 
+## Two files that are not the schema
+
+The schema above is one file because the schema is one thing. Two other
+things live beside it, and both are separate files for a reason:
+
+| file | what it is | who runs it | when |
+|---|---|---|---|
+| `schema/extensions.sql` | the extensions (pgcrypto, pg_trgm, citext, vector) | a **superuser** | once, before the schema |
+| `schema/grants.sql` | the runtime role's permissions | the **operator** | once per agent, after the schema |
+
+**The extensions are separate** because pgvector's `vector` extension is
+NOT a *trusted* extension — only a superuser may create it — and the
+schema uses its `halfvec` type for the embedding columns. `pgcrypto`,
+`pg_trgm` and `citext` ARE trusted, so a role with CREATE on the
+database may install them. On a database where the extensions already
+exist, `init.sql`'s own `CREATE EXTENSION IF NOT EXISTS` lines are
+no-ops and need no privilege at all.
+
+**The grants are separate** because the runtime role's NAME is
+per-install (`harness_app`, `peribot_app`, …), so the grants cannot be
+baked into the schema: they are a psql variable, exactly like the
+agent's schema name. The grants give the runtime role DML on the
+agent's schema and on the shared public tables — and deliberately
+NOT delete on `public.users` or `public.app_settings`: deleting a user or
+a setting is not something the app does.
+
+```bash
+# the extensions, once, as a superuser:
+sudo -u postgres psql -d <db> -f schema/extensions.sql
+
+# the schema and the grants, as the operator:
+bash tools/migrate.sh wisp evie clawbie
+```
+
+`tools/migrate.sh` does the second command, including the grants.
+
 ## Why there is no migrations/ directory
 
 This project was private for its whole life, and it carried its history

@@ -11,6 +11,20 @@
 # The agents come from the install config, from the .env, or from the
 # command line.
 #
+# THREE FILES, IN THIS ORDER
+#   1. schema/extensions.sql  the extensions (once, as a superuser)
+#   2. schema/init.sql        the schema (per agent)
+#   3. schema/grants.sql      the runtime role's permissions (per agent)
+#
+# Step 1 is separate because pgvector's "vector" extension is NOT a
+# trusted extension -- only a superuser may create it -- and the schema
+# uses its halfvec type. On a database where the extensions already
+# exist, step 1 is a no-op and needs no privilege.
+#
+# Step 3 is separate because the runtime role's NAME is per-install
+# (harness_app, peribot_app, ...), so the grants cannot be baked into
+# the schema.
+#
 # THE ROLE
 # The schema is applied as the OPERATOR role (APP_DB_OPERATOR_ROLE), not
 # as the runtime role in DATABASE_URL. The runtime role has DML rights
@@ -31,6 +45,7 @@ fi
 
 : "${DATABASE_URL:?DATABASE_URL not set (check .env)}"
 : "${APP_DB_OPERATOR_ROLE:=peristyle}"
+: "${APP_DB_RUNTIME_ROLE:=harness_app}"
 
 # Parse host/port/db from URL.
 HOST=$(echo "$DATABASE_URL" | sed -E 's|^postgresql?://[^@]+@||; s|/.*$||')
@@ -89,6 +104,9 @@ fi
 for AGENT_NAME in $AGENTS; do
     echo "  -> $AGENT_NAME"
     run_sql schema/init.sql -v "agent_name=$AGENT_NAME"
+    run_sql schema/grants.sql -v "agent_name=$AGENT_NAME" \
+                                -v "runtime_role=$APP_DB_RUNTIME_ROLE" \
+                                -v "operator_role=$APP_DB_OPERATOR_ROLE"
 done
 
 echo "Schema applied."
