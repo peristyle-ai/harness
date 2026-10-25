@@ -8,15 +8,14 @@
 #
 #   backup dir   : the argument, else $HARNESS_BACKUP_DIR, else
 #                  ~/harness-backups
-#   database     : $HARNESS_DB
-#   role         : $APP_DB_OPERATOR_ROLE -- the role that OWNS the
-#                  schema. The runtime role in DATABASE_URL usually
-#                  cannot read the whole database, so it is not used
-#                  for the dump.
-#   password     : $APP_DB_OPERATOR_PASSWORD. When it is empty the
-#                  script connects over the unix socket and relies on
-#                  peer auth, which needs the OS user to have the same
-#                  name as the role.
+#   database     : db.database in config.yaml
+#   role         : db.operator_role -- the role that OWNS the schema.
+#                  The runtime role in db.url usually cannot read the
+#                  whole database, so it is not used for the dump.
+#   password     : db.operator_password. When it is empty the script
+#                  connects over the unix socket and relies on peer
+#                  auth, which needs the OS user to have the same name
+#                  as the role.
 #   scope        : $HARNESS_BACKUP_SCHEMAS -- a space-separated list of
 #                  schemas to dump. Leave it empty to dump the whole
 #                  database, which is right when the database belongs
@@ -24,20 +23,38 @@
 #                  SHARED with other applications and you only want
 #                  the harness's own schemas, e.g.
 #
-#                    HARNESS_BACKUP_SCHEMAS="public wisp evie"
+#                    HARNESS_BACKUP_SCHEMAS="public peribot"
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ -f .env ]; then
-    set -a; . ./.env; set +a
-fi
+CONFIG="${HARNESS_CONFIG:-config.yaml}"
+[ -f "$CONFIG" ] || { echo "no $CONFIG -- copy config.yaml.example to config.yaml" >&2; exit 1; }
 
-: "${DATABASE_URL:?DATABASE_URL not set}"
-: "${HARNESS_DB:=harness}"
+eval "$(python3 - "$CONFIG" <<'PY'
+import shlex, sys
+import yaml
 
-# Pull the parts out of the URL: postgresql://user:pass@host:port/db
-CONN="${DATABASE_URL#postgresql://}"
+cfg = yaml.safe_load(open(sys.argv[1])) or {}
+db = cfg.get("db") or {}
+
+
+def emit(name, value):
+    print(f"{name}={shlex.quote(str(value))}")
+
+
+emit("CFG_DB_URL", db.get("url") or "")
+emit("CFG_OPERATOR_ROLE", db.get("operator_role") or "")
+emit("CFG_OPERATOR_PASSWORD", db.get("operator_password") or "")
+emit("CFG_DB_NAME", db.get("database") or "harness")
+PY
+)"
+
+: "${CFG_DB_URL:?db.url is not set in ${CONFIG}}"
+DB="$CFG_DB_NAME"
+
+# Pull the parts out of the URL: postgresql://user:***@host:port/db
+CONN="${CFG_DB_URL#postgresql://}"
 CONN="${CONN#postgres://}"
 DB_USER="${CONN%%@*}"
 DB_PASS=""
@@ -52,15 +69,15 @@ case "$DB_HOST" in
     *:*) DB_PORT="${DB_HOST##*:}"; DB_HOST="${DB_HOST%%:*}" ;;
 esac
 
-BACKUP_ROLE="${APP_DB_OPERATOR_ROLE:-$DB_USER}"
+BACKUP_ROLE="$CFG_OPERATOR_ROLE"
 BACKUP_DIR="${1:-${HARNESS_BACKUP_DIR:-$HOME/harness-backups}}"
 
 # Connection mode. A password means TCP (the password is a scram
 # verifier, so it must go over the wire). No password means the unix
 # socket, where peer auth applies and no password is needed.
-PG_ARGS=(-d "$HARNESS_DB" -U "$BACKUP_ROLE")
-if [ -n "${APP_DB_OPERATOR_PASSWORD:-}" ]; then
-    export PGPASSWORD="$APP_DB_OPERATOR_PASSWORD"
+PG_ARGS=(-d "$DB" -U "$BACKUP_ROLE")
+if [ -n "$CFG_OPERATOR_PASSWORD" ]; then
+    export PGPASSWORD="$CFG_OPERATOR_PASSWORD"
     PG_ARGS+=(-h "$DB_HOST" -p "$DB_PORT")
     CONN_MODE="tcp $DB_HOST:$DB_PORT as $BACKUP_ROLE"
 else
@@ -75,9 +92,9 @@ done
 
 mkdir -p "$BACKUP_DIR"
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-OUT="$BACKUP_DIR/${HARNESS_DB}-${TS}.sql.gz"
+OUT="$BACKUP_DIR/${DB}-${TS}.sql.gz"
 
-echo "[$(date -Iseconds)] backup start: $HARNESS_DB via $CONN_MODE -> $OUT"
+echo "[$(date -Iseconds)] backup start: $DB via $CONN_MODE -> $OUT"
 if [ ${#SCHEMA_ARGS[@]} -gt 0 ]; then
     echo "[$(date -Iseconds)]   scope: ${HARNESS_BACKUP_SCHEMAS}"
 fi

@@ -12,7 +12,6 @@ no absolute path of anyone's.
                       Default: HARNESS_ROOT's parent.
   HARNESS_LOG_DIR     the audit logs. Default: HARNESS_ROOT/logs.
   HARNESS_UPLOAD_DIR  the uploads. Default: HARNESS_ROOT/uploads.
-  HARNESS_ENV_FILE    the .env to read. Default: HARNESS_ROOT/.env.
 """
 import os
 from pathlib import Path
@@ -27,9 +26,6 @@ LOG_DIR = Path(os.environ.get("HARNESS_LOG_DIR", REPO_ROOT / "logs")).resolve()
 
 UPLOAD_DIR = Path(os.environ.get(
     "HARNESS_UPLOAD_DIR", REPO_ROOT / "uploads")).resolve()
-
-ENV_FILE = Path(os.environ.get(
-    "HARNESS_ENV_FILE", REPO_ROOT / ".env")).resolve()
 
 # the systemd unit directory the exec_bash tool may touch (the safety
 # allowlist names the units it is allowed to manage)

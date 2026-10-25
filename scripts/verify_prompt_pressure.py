@@ -1,7 +1,7 @@
 """End-to-end check of the prompt-pressure warning against the REAL
 harness state (real identity files, real config, real memory rows).
 
-Run: set -a; . ./.env; set +a; .venv/bin/python verify_prompt_pressure.py
+Run: .venv/bin/python scripts/verify_prompt_pressure.py
 """
 import dataclasses
 import sys

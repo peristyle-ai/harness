@@ -15,8 +15,7 @@ That writes:
 
 | file | what it is |
 |---|---|
-| `config.yaml` | the harness config for THIS install (one agent, the embedding provider) |
-| `.env` | the environment: the install's values filled in, the rest left as visible placeholders |
+| `config.yaml` | the harness config for THIS install (one agent, the embedding provider, the generated secrets). Mode 0600, not tracked. |
 | `pie/<agent>/identity/` | the agent's identity files — the **default sysadmin identity** with the name filled in |
 | `schema/init.sql` | the whole schema — the shared public tables and the agent's schema |
 
@@ -30,8 +29,8 @@ Then the operator finishes the job (the applier prints these):
    sudo -u postgres psql -d <db> -f schema/extensions.sql
    ```
 
-2. fill in the `REPLACE_ME` placeholders in `.env` (the database password,
-   the LLM key + base URL, the app secret, the TLS paths)
+2. fill in the `YOUR_..._HERE` placeholders in `config.yaml` (the LLM key
+   + base URL, the embedding key, the TLS paths)
 3. apply the schema **and the runtime role's grants** (`bash tools/migrate.sh`)
 4. create the first admin (`python3 tools/create_user.py --email … --password … --role admin`)
 5. start the service:

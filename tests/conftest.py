@@ -9,7 +9,7 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__) + "/.."))
 
 @pytest.fixture
 def config_path(tmp_path):
-    """A minimal config.yaml + .env pointing at a throwaway test config."""
+    """A minimal config.yaml pointing at a throwaway test config."""
     cfg = tmp_path / "config.yaml"
     cfg.write_text("""
 app:
@@ -60,5 +60,9 @@ security:
     referrer_policy: strict-origin-when-cross-origin
     csp: "default-src 'self'"
   rate_limit: { default: "100/minute", chat: "30/minute", memory: "60/minute" }
+  internal_token: test-internal-token
+uploads:
+  dir: uploads
+  max_bytes: 10485760
 """)
     return str(cfg)

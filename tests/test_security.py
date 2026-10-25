@@ -4,7 +4,8 @@ Run with: HARNESS_RUN_LIVE_TESTS=1 pytest tests/test_security.py
 
 Verifies:
 - KeyRedactionFilter masks LLM_API_KEY= *** + Authorization: Bearer ***
-- sanity_check_env refuses world-readable .env, placeholder keys, empty keys
+- sanity_check_config refuses a world-readable config.yaml, placeholder
+  values, empty required values -- and the tracked template itself
 - /health and /api/* responses carry all security headers
 - /health body never contains key-shape leaks
 - Agent loop has the four MAX_* config attributes wired in
@@ -23,7 +24,7 @@ import pytest
 from app.security import (
     KeyRedactionFilter,
     install_log_redaction,
-    sanity_check_env,
+    sanity_check_config,
 )
 
 
@@ -72,54 +73,80 @@ def test_key_redaction_filter_passes_through_safe_messages():
     assert rec.msg == "hello world"
 
 
-# --- sanity_check_env ----------------------------------------------------
+# --- sanity_check_config -------------------------------------------------
 
-def test_sanity_check_env_world_readable():
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".env") as f:
-        f.write("HARNESS_SECRET_KEY=x\nLLM_API_KEY=y\nDATABASE_URL=p\n")
-        path = f.name
-    os.chmod(path, 0o644)
-    try:
-        with pytest.raises(RuntimeError, match="world-readable"):
-            sanity_check_env(path)
-    finally:
-        os.chmod(path, 0o600)
-        os.unlink(path)
+def _write_config(tmp_path, body, mode=0o600, name="config.yaml"):
+    p = tmp_path / name
+    p.write_text(body)
+    os.chmod(p, mode)
+    return p
 
 
-def test_sanity_check_env_placeholder():
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".env") as f:
-        f.write("HARNESS_SECRET_KEY=x\nLLM_API_KEY=***\nDATABASE_URL=p\n")
-        path = f.name
-    os.chmod(path, 0o600)
-    try:
-        with pytest.raises(RuntimeError, match="placeholder"):
-            sanity_check_env(path)
-    finally:
-        os.unlink(path)
+GOOD_CONFIG = """
+app:
+  secret_key: a-real-secret
+db:
+  url: postgresql://harness_app:pw@localhost:5432/harness
+llm:
+  api_key: sk-cp-a-real-key
+"""
 
 
-def test_sanity_check_env_empty_key():
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".env") as f:
-        f.write("HARNESS_SECRET_KEY=x\nLLM_API_KEY=\nDATABASE_URL=p\n")
-        path = f.name
-    os.chmod(path, 0o600)
-    try:
-        with pytest.raises(RuntimeError, match="empty"):
-            sanity_check_env(path)
-    finally:
-        os.unlink(path)
+def test_sanity_check_config_missing_file(tmp_path):
+    with pytest.raises(RuntimeError, match="not found"):
+        sanity_check_config(tmp_path / "nope.yaml")
 
 
-def test_sanity_check_env_happy_path():
-    with tempfile.NamedTemporaryFile("w", delete=False, suffix=".env") as f:
-        f.write("HARNESS_SECRET_KEY=x\nLLM_API_KEY=sk-cp-***\nDATABASE_URL=p\n")
-        path = f.name
-    os.chmod(path, 0o600)
-    try:
-        sanity_check_env(path)  # should not raise
-    finally:
-        os.unlink(path)
+def test_sanity_check_config_readable_by_others(tmp_path):
+    """config.yaml holds the API key and the database password, so it
+    must not be group- or world-readable."""
+    p = _write_config(tmp_path, GOOD_CONFIG, mode=0o644)
+    with pytest.raises(RuntimeError, match="readable by others"):
+        sanity_check_config(p)
+
+
+def test_sanity_check_config_placeholder(tmp_path):
+    body = GOOD_CONFIG.replace("sk-cp-a-real-key", "YOUR_LLM_API_KEY_HERE")
+    p = _write_config(tmp_path, body)
+    with pytest.raises(RuntimeError, match="placeholder"):
+        sanity_check_config(p)
+
+
+def test_sanity_check_config_empty_value(tmp_path):
+    body = GOOD_CONFIG.replace("url: postgresql://harness_app:pw@localhost:5432/harness",
+                               "url: ''")
+    p = _write_config(tmp_path, body)
+    with pytest.raises(RuntimeError, match="empty"):
+        sanity_check_config(p)
+
+
+def test_sanity_check_config_happy_path(tmp_path):
+    p = _write_config(tmp_path, GOOD_CONFIG)
+    sanity_check_config(p)  # should not raise
+
+
+def test_the_example_config_is_not_a_working_config(tmp_path):
+    """The tracked template must FAIL the check.
+
+    config.yaml.example holds YOUR_..._HERE placeholders. If it ever
+    passed the startup check, a fresh install would start with a
+    placeholder API key and fail at the provider with an opaque 401.
+    """
+    example = Path(__file__).resolve().parents[1] / "config.yaml.example"
+    assert example.exists()
+    p = _write_config(tmp_path, example.read_text())
+    with pytest.raises(RuntimeError):
+        sanity_check_config(p)
+
+
+def test_the_example_config_is_not_world_readable_by_default(tmp_path):
+    """A config copied from the template inherits its mode. The copy
+    step in the README says chmod 600 -- and the check is what catches
+    an operator who forgets it."""
+    example = Path(__file__).resolve().parents[1] / "config.yaml.example"
+    p = _write_config(tmp_path, example.read_text(), mode=0o644)
+    with pytest.raises(RuntimeError, match="readable by others"):
+        sanity_check_config(p)
 
 
 # --- Code-pattern checks (no live server required) -----------------------

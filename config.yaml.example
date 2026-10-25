@@ -1,40 +1,78 @@
+# =============================================================================
+# config.yaml.example — the TEMPLATE for the harness config.
+#
+#   cp config.yaml.example config.yaml
+#   chmod 600 config.yaml
+#   $EDITOR config.yaml
+#
+# config.yaml is NOT tracked in git: it holds the API keys and the
+# database password. This file is the tracked copy, with safe values.
+#
+# Every value below is REAL except where it says YOUR_..._HERE -- those
+# are the ones you must fill in. The app refuses to start if any of them
+# is still a placeholder, or if this file is readable by anyone else.
+#
+# The values that are NOT secret are filled in for you: the bind address,
+# the model name, the base URLs, the limits. Change them if your setup
+# needs it; leave them alone if it does not.
+# =============================================================================
+
 app:
   name: harness
-  bind: ${HARNESS_BIND}
+  bind: 127.0.0.1:5010
   tls:
-    cert: ${HARNESS_TLS_CERT}
-    key: ${HARNESS_TLS_KEY}
-  default_agent: ${HARNESS_DEFAULT_AGENT}
-  # The database that HOLDS the agent schemas. Override per-install with
-  # HARNESS_INSTALLATION_DATABASE.
-  installation_database: ${HARNESS_INSTALLATION_DATABASE}
+    # The certificate for THIS install's hostname. The harness serves
+    # HTTPS with it; a reverse proxy in front can terminate TLS instead
+    # and leave these empty.
+    cert: /opt/harness/tls/cert.pem
+    key: /opt/harness/tls/key.pem
+  # The agent a chat lands in when the request does not name one.
+  default_agent: peribot
+  # The database that HOLDS the agent schemas. Override per-install.
+  installation_database: harness
   # The agents this install serves. Each one is a schema in that database
   # plus a directory under pie_root. One agent is the usual case; add
   # another by adding its name here and creating its schema (see
   # schema/README.md).
   agents:
   - peribot
-  pie_root: ${HARNESS_PIE_ROOT}
-  secret_key: ${HARNESS_SECRET_KEY}
+  # Where the per-agent directories live (identity files, docs, scripts).
+  pie_root: pie
+  # The session cookie's signing key. Generate one:
+  #   python3 -c "import secrets; print(secrets.token_hex(32))"
+  secret_key: YOUR_SECRET_KEY_HERE
+
 db:
-  url: ${DATABASE_URL}
-  operator_role: ${APP_DB_OPERATOR_ROLE}
-  runtime_role: ${APP_DB_RUNTIME_ROLE}
-  database: ${HARNESS_DB}
+  # The RUNTIME role -- the one the app connects as. It has DML rights
+  # only: it cannot create a table.
+  url: postgresql://harness_app:YOUR_RUNTIME_PASSWORD@localhost:5432/harness
+  # The OPERATOR role -- the one that OWNS the schema and applies it
+  # (tools/migrate.sh). It is normally named after the OS user that runs
+  # the install, because the operator connects over the unix socket with
+  # PEER AUTH, which checks the OS user and not a password.
+  operator_role: harness_operator
+  # The operator role's password. Leave it EMPTY when the operator
+  # connects over the unix socket with peer auth; set it when the
+  # operator connects over TCP (a remote database, or an OS user whose
+  # name is not the role's).
+  operator_password: ""
+  runtime_role: harness_app
+  database: harness
+
 llm:
-  adapter: ${LLM_ADAPTER}
-  api_key: ${LLM_API_KEY}
-  base_url: ${LLM_BASE_URL}
-  model: ${LLM_MODEL}
-  # Per Mal 2026-10-21: cap opened to the model's true ceiling (524288, the
-  # value the API rejects above: "model[MiniMax-M3.1-Flash] does not support
-  # max tokens > 524288"). MiniMax is effectively free, so there is no cost
-  # reason to ration output. The knob is deliberately still wired: to reinstate
-  # a cap, set LLM_MAX_TOKENS (and the per-agent *_LLM_MAX_TOKENS) to whatever
-  # you want, e.g. 8192. No code change needed.
-  max_tokens: ${LLM_MAX_TOKENS}
-  timeout_s: ${LLM_TIMEOUT_S}
-  temperature: ${LLM_TEMPERATURE}
+  # The adapter module and the model it talks to. `minimax_m3` and
+  # `minimax_m31_flash` both speak MiniMax's Anthropic-compatible API.
+  adapter: minimax_m3
+  api_key: YOUR_LLM_API_KEY_HERE
+  base_url: https://api.minimax.io/anthropic
+  model: MiniMax-M3
+  max_tokens: 2048
+  timeout_s: 60
+  temperature: 0.7
+  # SSE streaming. 1 = stream (the chat UI shows the answer as it is
+  # written); 0 = wait for the whole answer. The LLM_STREAMING
+  # environment variable overrides this at runtime.
+  streaming: 1
   # Per-agent LLM overrides.
   #
   # Each entry is a COMPLETE llm block for one agent: the harness uses it
@@ -43,146 +81,161 @@ llm:
   # with no entry falls through to the global block.
   #
   # A single-agent install needs none of this, which is why it is
-  # commented out below. Uncomment it (and add the matching <AGENT>_LLM_*
-  # variables to .env) when one agent needs a different model or a
-  # different API key from the rest.
+  # commented out below. Uncomment it (and add the matching
+  # <AGENT>_LLM_* values to this file) when one agent needs a different
+  # model or a different API key from the rest.
   #
   # per_agent:
   #   peribot:
-  #     adapter: ${PERIBOT_LLM_ADAPTER}
-  #     api_key: ${PERIBOT_LLM_API_KEY}
-  #     base_url: ${PERIBOT_LLM_BASE_URL}
-  #     model: ${PERIBOT_LLM_MODEL}
-  #     max_tokens: ${PERIBOT_LLM_MAX_TOKENS}
-  #     timeout_s: ${PERIBOT_LLM_TIMEOUT_S}
-  #     temperature: ${PERIBOT_LLM_TEMPERATURE}
-  #     thinking: ${PERIBOT_LLM_THINKING}
+  #     adapter: minimax_m31_flash
+  #     api_key: YOUR_LLM_API_KEY_HERE
+  #     base_url: https://api.minimax.io/anthropic
+  #     model: MiniMax-M3.1-Flash
+  #     max_tokens: 524288
+  #     timeout_s: 180
+  #     temperature: 0.7
+  #     streaming: 1
+
 embedding:
   # WHERE the embeddings come from. Two shapes, chosen by the base_url:
   #
-  # 1. A local GPU server (the default on our own machines):
-  #      EMBEDDING_BASE_URL=http://127.0.0.1:8080/v1
-  #      EMBEDDING_API_KEY=            (empty - the local server takes no key)
+  # 1. A local GPU server:
+  #      base_url: http://127.0.0.1:8080/v1
+  #      api_key: ""            <- the local server takes no key
   #
-  # 2. A REMOTE embedding service (no GPU on this machine). Point the
-  #    base_url at the service and give it a key; the client then sends
-  #    "Authorization: Bearer <key>" on every request:
-  #      EMBEDDING_BASE_URL=https://embed.example.com/v1
-  #      EMBEDDING_API_KEY=ep_...
-  #    The request body is OpenAI-compatible either way
-  #    ({"model", "input", "dimensions"}), so a local router and a hosted
-  #    service are interchangeable.
+  # 2. A REMOTE embedding service (no GPU on this machine). Give it a
+  #    key; the client then sends "Authorization: Bearer <key>" on every
+  #    request:
+  #      base_url: https://embed.example.com/v1
+  #      api_key: YOUR_EMBEDDING_API_KEY_HERE
+  #
+  # The request body is OpenAI-compatible either way
+  # ({"model", "input", "dimensions"}), so a local router and a hosted
+  # service are interchangeable.
   #
   # The model name must match the service's model exactly: a request for
   # another model is refused rather than silently answered with a
   # different one.
-  base_url: ${EMBEDDING_BASE_URL}
-  model: ${EMBEDDING_MODEL}
-  dimensions: ${EMBEDDING_DIMENSIONS}
-  api_key: ${EMBEDDING_API_KEY}
-  timeout_s: ${EMBEDDING_TIMEOUT_S}
+  base_url: http://127.0.0.1:8080/v1
+  model: Qwen/Qwen3-Embedding-4B
+  dimensions: 1024
+  api_key: ""
+  timeout_s: 30
+
 memory:
-  top_k: ${MEMORY_TOP_K}
-  vector_limit: ${MEMORY_VECTOR_LIMIT}
-  trigram_limit: ${MEMORY_TRIGRAM_LIMIT}
-  recency_decay_days: ${MEMORY_RECENCY_DECAY_DAYS}
+  top_k: 10
+  vector_limit: 30
+  trigram_limit: 30
+  recency_decay_days: 30
   chunk:
-    max_tokens: ${MEMORY_CHUNK_MAX_TOKENS}
-    min_tokens: ${MEMORY_CHUNK_MIN_TOKENS}
-    overlap_tokens: ${MEMORY_CHUNK_OVERLAP_TOKENS}
+    max_tokens: 800
+    min_tokens: 20
+    overlap_tokens: 50
   permanent:
-    max_tokens: ${MEMORY_PERMANENT_MAX_TOKENS}
-    warn_overflow: ${MEMORY_PERMANENT_WARN_OVERFLOW}
-    pin_audit: ${MEMORY_PERMANENT_PIN_AUDIT}
+    max_tokens: 10000
+    warn_overflow: true
+    pin_audit: true
+
 agent:
-  max_tool_iterations: ${MAX_TOOL_ITERATIONS}
-  max_searches_per_turn: ${MAX_SEARCHES_PER_TURN}
-  max_pins_per_turn: ${MAX_PINS_PER_TURN}
-  max_unpins_per_turn: ${MAX_UNPINS_PER_TURN}
-  # Wall-clock cap for ONE turn (2026-10-25, per Mal). Big turns are fine;
-  # a turn that runs forever is not. 0 = no cap.
-  max_turn_seconds: ${MAX_TURN_SECONDS}
-  # Token budget for the LIVE part of a turn -- the messages the loop
-  # replays on every model call. Over budget, the OLDEST iterations of the
-  # turn are dropped (a sliding window) and the model is told, in the
-  # system prompt, that its tail was truncated so it recovers the
-  # trajectory from its memory tools and its commits.
-  # MiniMax-M3.1-Flash's window is 1,000,000 tokens; 600,000 leaves room
-  # for the history replay and the generation.
-  context_window_tokens: ${CONTEXT_WINDOW_TOKENS}
+  max_tool_iterations: 25
+  max_searches_per_turn: 15
+  max_pins_per_turn: 10
+  max_unpins_per_turn: 10
+  # Wall-clock cap for ONE turn, in seconds. The iteration cap is the
+  # primary guard; this is the backstop for a slow turn. 0 = no cap.
+  max_turn_seconds: 18000
+  # Token budget for the LIVE part of one turn -- the messages the loop
+  # replays on every model call. Over budget, the OLDEST iterations of
+  # the turn are dropped and the model is told, in the system prompt,
+  # that its tail was truncated -- so it recovers the trajectory from
+  # its memory tools and its commits.
+  context_window_tokens: 600000
   # Head/tail trim for tool output sent to the MODEL (the full output
   # still goes into the trajectory).
-  tool_output_head_chars: ${TOOL_OUTPUT_HEAD_CHARS}
-  tool_output_tail_chars: ${TOOL_OUTPUT_TAIL_CHARS}
+  tool_output_head_chars: 4000
+  tool_output_tail_chars: 4000
+
 prompt:
-  # Conditional system-prompt pressure warnings (2026-10-22).
-  # When an identity file or the permanent-memory block passes this
-  # fraction of its cap, the harness appends a warning to the system
-  # prompt telling the agent to move the detail out to memories,
-  # skills, scripts or docs. Set PROMPT_PRESSURE_ENABLED=false to
-  # disable.
-  pressure_enabled: ${PROMPT_PRESSURE_ENABLED}
-  pressure_threshold: ${PROMPT_PRESSURE_THRESHOLD}
+  # Conditional system-prompt pressure warnings. When an identity file or
+  # the permanent-memory block passes this fraction of its cap, the
+  # harness appends a warning to the system prompt telling the agent to
+  # move the detail out of it.
+  pressure_enabled: true
+  pressure_threshold: 0.85
+
 reverie:
-  # Nightly reverie (2026-10-23, per Mal). NOT a heartbeat: the reverie
-  # is a real agent turn, captured in the turns table like any other
-  # turn, so the next day's conversation has context of what the reverie
-  # changed. It asks the agent to clean up its own context budget
-  # (permanent memories + identity files) down to a target percentage
-  # of the caps, then reflect and put proposals to the user in chat.
+  # The nightly reverie. NOT a heartbeat: the reverie is a real agent
+  # turn, captured in the turns table like any other turn, so the next
+  # day's conversation has context of what the reverie changed. It asks
+  # the agent to clean up its own context budget (permanent memories +
+  # identity files) down to a target percentage of the caps, then reflect
+  # and put proposals to the user in chat.
   #
   # It only fires if the agent had real activity in the window
-  # (REVERIE_ACTIVITY_WINDOW_HOURS) - otherwise the turn history would
-  # fill up with no-op reveries.
-  enabled: ${REVERIE_ENABLED}
+  # (activity_window_hours) -- otherwise the turn history would fill up
+  # with no-op reveries.
+  enabled: false
   # Which agents get a reverie. Empty = every installed agent.
-  agents: ${REVERIE_AGENTS}
-  # Nightly time of day (local to REVERIE_TIMEZONE). The systemd timer
-  # is generated from this by scripts/install_reverie_timer.sh.
-  at: ${REVERIE_AT}
-  timezone: ${REVERIE_TIMEZONE}
+  agents: ""
+  # Nightly time of day (local to timezone). The systemd timer is
+  # generated from this by scripts/install_reverie_timer.sh.
+  at: "03:00"
+  timezone: Australia/Brisbane
   # Targets the reverie must reach, as a fraction of each cap. 0.60
   # leaves headroom below the 0.85 prompt-pressure warning.
-  file_target_pct: ${REVERIE_FILE_TARGET_PCT}
-  memory_target_pct: ${REVERIE_MEMORY_TARGET_PCT}
+  file_target_pct: 0.60
+  memory_target_pct: 0.60
   # Only fire if the agent had activity in this window.
-  activity_window_hours: ${REVERIE_ACTIVITY_WINDOW_HOURS}
+  activity_window_hours: 24
   # The DM partner the reverie turn runs as (the agent's own user).
-  user_email: ${REVERIE_USER_EMAIL}
+  user_email: ""
   # Optional per-agent instruction file, relative to pie/<agent>/identity/.
   # If present, its content is appended to the reverie brief.
-  prompt_file: ${REVERIE_PROMPT_FILE}
+  prompt_file: REVERIE.md
   # Identity files the reverie must NOT edit. SOUL.md holds the super
   # important rules and may only change with the user's permission.
-  protected_files: ${REVERIE_PROTECTED_FILES}
+  protected_files: SOUL.md
   # Optional cap on the tool iterations of one reverie turn (0 = use the
   # global agent.max_tool_iterations). A reverie should be a focused
   # session, not an open-ended survey.
-  max_tool_iterations: ${REVERIE_MAX_TOOL_ITERATIONS}
+  max_tool_iterations: 0
+
 bootstrap:
+  # The identity files loaded at the start of every turn, and their caps.
+  # An identity file over its cap is a BOOT FAILURE, not bloat.
   files:
     SOUL.md:
       path: SOUL.md
-      max_bytes: ${BOOTSTRAP_SOUL_MAX_BYTES}
+      max_bytes: 8000
     USER.md:
       path: USER.md
-      max_bytes: ${BOOTSTRAP_USER_MAX_BYTES}
+      max_bytes: 4000
     AGENTS.md:
       path: AGENTS.md
-      max_bytes: ${BOOTSTRAP_AGENTS_MAX_BYTES}
+      max_bytes: 24000
     IDENTITY.md:
       path: IDENTITY.md
-      max_bytes: ${BOOTSTRAP_IDENTITY_MAX_BYTES}
-  behavior_on_overflow: ${BOOTSTRAP_OVERFLOW}
+      max_bytes: 8000
+  behavior_on_overflow: fail
+
+uploads:
+  # Where uploaded files are stored, and the biggest one the app accepts.
+  # HARNESS_UPLOAD_DIR in the environment overrides the directory.
+  dir: uploads
+  max_bytes: 10485760
+
 security:
   headers:
     x_content_type_options: nosniff
     x_frame_options: DENY
-    strict_transport_security: max-age=${SECURITY_HSTS_MAX_AGE}; includeSubDomains
+    strict_transport_security: "max-age=15552000; includeSubDomains"
     referrer_policy: strict-origin-when-cross-origin
-    csp: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline';
-      script-src 'self'
+    csp: "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
   rate_limit:
-    default: ${RATE_LIMIT_DEFAULT}
-    chat: ${RATE_LIMIT_CHAT}
-    memory: ${RATE_LIMIT_MEMORY}
+    default: 100/minute
+    chat: 30/minute
+    memory: 60/minute
+  # The shared secret for the service-to-service routes
+  # (/api/v1/internal/*), checked against the X-Harness-Token header.
+  # Generate one: python3 -c "import secrets; print(secrets.token_hex(32))"
+  internal_token: YOUR_INTERNAL_TOKEN_HERE

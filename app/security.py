@@ -1,13 +1,13 @@
 """Security hardening for harness.
 
-Phase 8 (2026-10-08):
 - Security headers (X-Content-Type-Options, X-Frame-Options, HSTS,
   Referrer-Policy, CSP) applied to every response.
 - Log redaction: any `LLM_API_KEY= ***` or `Authorization: Bearer ***`
   pattern in a log record is masked before emission.
 - Per-request `X-Request-Id` for log correlation.
-- Sanity check at startup: refuse to start if `.env` is world-readable,
-  has empty required keys, or has a `***…` placeholder.
+- Sanity check at startup: refuse to start if config.yaml is readable by
+  others, is missing a required value, or still holds a placeholder where
+  a real secret belongs.
 - Rate limiting via Flask-Limiter (in-memory, process-wide).
 """
 from __future__ import annotations
@@ -26,6 +26,29 @@ from .config import AppConfig
 _REDACT_BEARER = re.compile(r"(Authorization:\s*Bearer\s+)([A-Za-z0-9_\-\.]+)", re.IGNORECASE)
 _REDACT_KEY = re.compile(r"(LLM_API_KEY\s*=\s*)([^\s\"']+)", re.IGNORECASE)
 _MASK = "***REDACTED***"
+
+# The values that mean "the operator has not filled this in yet". A
+# config that still holds one of them is not a working config, and the
+# app says so at startup rather than failing at the first API call.
+PLACEHOLDERS = (
+    "YOUR_API_KEY_HERE",
+    "YOUR_SECRET_KEY_HERE",
+    "YOUR_PASSWORD_HERE",
+    "YOUR_TOKEN_HERE",
+    "YOUR_INTERNAL_TOKEN_HERE",
+    "REPLACE_ME",
+    "replace_me",
+    "changeme",
+    "sk-...",
+)
+
+# The config values that MUST be present and non-empty. A missing secret
+# is a startup failure, not a runtime surprise.
+REQUIRED_CONFIG_VALUES = (
+    ("app", "secret_key"),
+    ("db", "url"),
+    ("llm", "api_key"),
+)
 
 
 class KeyRedactionFilter(logging.Filter):
@@ -97,36 +120,52 @@ def install_request_id(app: Flask) -> None:
         return response
 
 
-def sanity_check_env(env_path: str | os.PathLike[str] = ".env") -> None:
-    """Refuse to start if .env is world-readable or contains an empty key
-    or a `***…` placeholder. Idempotent: safe to call multiple times."""
-    p = Path(env_path)
+def sanity_check_config(config_path: str | os.PathLike[str] = "config.yaml") -> None:
+    """Refuse to start on a config that is not a working config.
+
+    Three ways to fail, all of them "the operator has not finished":
+
+      1. the file is group- or world-readable -- it holds the API key and
+         the database password, so it must be mode 0600;
+      2. a required value is missing or empty;
+      3. a required value still holds a placeholder.
+
+    Idempotent: safe to call more than once. Raises RuntimeError, which
+    stops the service before it serves a single request.
+    """
+    p = Path(config_path)
     if not p.exists():
-        return
+        raise RuntimeError(
+            f"security: {p} not found. Copy config.yaml.example to "
+            "config.yaml and fill in the values."
+        )
     mode = p.stat().st_mode & 0o777
     if mode & 0o044:
         raise RuntimeError(
-            f"security: {p} is world-readable (mode={oct(mode)}). "
+            f"security: {p} is readable by others (mode={oct(mode)}). "
+            f"It holds the API key and the database password. "
             f"Run: chmod 600 {p}"
         )
-    content = p.read_text()
-    for key in ("HARNESS_SECRET_KEY", "LLM_API_KEY", "DATABASE_URL"):
-        # Match the line up to the newline. `\s*` around `=` is fine (it
-        # only matches spaces), but the value capture must stop at the
-        # first newline to avoid the next line leaking in (since
-        # `\s*` greedily matches newlines).
-        m = re.search(rf"^{key}=([^\n]*)", content, re.MULTILINE)
-        if m and not m.group(1).strip():
-            raise RuntimeError(f"security: {key} is empty in {p}")
-    # Reject obvious placeholders. The value (no trailing whitespace) is
-    # everything between `=` and the next whitespace-or-line-end.
-    m = re.search(r"^LLM_API_KEY=([^\s\n]*)", content, re.MULTILINE)
-    if m:
-        val = m.group(1)
-        if val.startswith("***") or "****" in val or val == "replace_me":
+
+    import yaml
+
+    try:
+        raw = yaml.safe_load(p.read_text()) or {}
+    except Exception as e:
+        raise RuntimeError(f"security: {p} is not valid YAML: {e}") from e
+
+    for section, key in REQUIRED_CONFIG_VALUES:
+        val = (raw.get(section) or {}).get(key)
+        if val is None or not str(val).strip():
             raise RuntimeError(
-                f"security: LLM_API_KEY looks like a placeholder ({val[:6]}…). "
-                f"Edit {p} and set the real key."
+                f"security: {section}.{key} is empty in {p}. "
+                f"Edit {p} and set the real value."
+            )
+        val = str(val).strip()
+        if val in PLACEHOLDERS or val.startswith("YOUR_"):
+            raise RuntimeError(
+                f"security: {section}.{key} still holds a placeholder "
+                f"({val[:24]}). Edit {p} and set the real value."
             )
 
 

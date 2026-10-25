@@ -1,6 +1,6 @@
 """Streaming parity tests: SSE path vs buffered path must be indistinguishable.
 
-Run: set -a; . ./.env; set +a; .venv/bin/python scripts/check_stream_parity.py
+Run: .venv/bin/python scripts/check_stream_parity.py
 """
 import os
 from app.config import load_config

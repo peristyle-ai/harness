@@ -1,6 +1,6 @@
 """Verify _complete_with_deltas actually emits deltas and returns a response.
 
-Run: set -a; . ./.env; set +a; .venv/bin/python scripts/check_delta_forwarding.py
+Run: .venv/bin/python scripts/check_delta_forwarding.py
 """
 import sys
 from pathlib import Path

@@ -39,7 +39,7 @@ from typing import Any
 # Audit log: append-only JSON lines. One process, peristyle owns
 # the file. The directory is reused from the harness's existing
 # logging setup; if it's missing we create it.
-from app.paths import ENV_FILE, HOME_DIR, LOG_DIR, SYSTEMD_DIR
+from app.paths import HOME_DIR, LOG_DIR, SYSTEMD_DIR
 _AUDIT_DIR = LOG_DIR
 _AUDIT_FILE = _AUDIT_DIR / "tool_audit.jsonl"
 _AUDIT_LOCK = threading.Lock()
@@ -132,16 +132,34 @@ def _preview(v: Any) -> Any:
 _DSN_CACHE: dict[str, str] = {}
 _DSN_LOCK = threading.Lock()
 
+# The harness database URL, handed over by create_app() from the loaded
+# config. The sql_query tool used to read DATABASE_URL out of the .env;
+# the config is the source of truth now.
+_HARNESS_DSN: str | None = None
+
+
+def set_harness_dsn(url: str) -> None:
+    """Record the harness database URL from the loaded config."""
+    global _HARNESS_DSN
+    _HARNESS_DSN = url
+
+
+def _harness_dsn() -> str:
+    if _HARNESS_DSN:
+        return _HARNESS_DSN
+    # Not set yet (the tool ran outside the app): read the config.
+    from app.config import load_config
+    return load_config().db.url
+
 
 def build_dsn(db_name: str) -> str:
     """Return a libpq DSN for the named database.
 
-    Recognised names: 'harness' (from the install dir/.env
-    via DATABASE_URL) and 'peristyle' (from
-    the operator's home/peristyle/.env via PG* variables).
+    Recognised names: 'harness' (the database the app itself talks to,
+    from the config's db.url) and 'peristyle' (from the operator's
+    home/peristyle/.env via PG* variables).
 
-    Cached for the process lifetime. Reads the .env file once on
-    first call, then never touches disk again.
+    Cached for the process lifetime.
     """
     if db_name in _DSN_CACHE:
         return _DSN_CACHE[db_name]
@@ -149,9 +167,7 @@ def build_dsn(db_name: str) -> str:
         if db_name in _DSN_CACHE:
             return _DSN_CACHE[db_name]
         if db_name == "harness":
-            _DSN_CACHE[db_name] = _read_url_from_envfile(
-                ENV_FILE, "DATABASE_URL"
-            )
+            _DSN_CACHE[db_name] = _harness_dsn()
         elif db_name == "peristyle":
             _DSN_CACHE[db_name] = _build_peristyle_dsn(
                 HOME_DIR / ".env"
@@ -161,29 +177,6 @@ def build_dsn(db_name: str) -> str:
                 f"unknown db_name {db_name!r}; expected 'harness' or 'peristyle'"
             )
         return _DSN_CACHE[db_name]
-
-
-def _read_url_from_envfile(path: Path, key: str) -> str:
-    """Tiny dotenv reader — only handles KEY=*** ignores comments
-    and blank lines. The harness .env is well-formed (no export,
-    no multiline, no quoted values with embedded newlines), so
-    this is enough. Don't add dependencies; we already have
-    python-dotenv in the harness venv if we ever need it."""
-    text = path.read_text(encoding="utf-8", errors="replace")
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        m = re.match(rf"^{re.escape(key)}\s*=\s*(.*)$", line)
-        if m:
-            val = m.group(1).strip()
-            # Strip optional surrounding quotes
-            if (val.startswith('"') and val.endswith('"')) or (
-                val.startswith("'") and val.endswith("'")
-            ):
-                val = val[1:-1]
-            return val
-    raise FileNotFoundError(f"{key!r} not found in {path}")
 
 
 def _build_peristyle_dsn(path: Path) -> str:
@@ -484,63 +477,6 @@ def _preview(v: Any) -> Any:
 
 
 # --- DSN building -----------------------------------------------------
-
-_DSN_CACHE: dict[str, str] = {}
-_DSN_LOCK = threading.Lock()
-
-
-def build_dsn(db_name: str) -> str:
-    """Return a libpq DSN for the named database.
-
-    Recognised names: 'harness' (from the install dir/.env
-    via DATABASE_URL) and 'peristyle' (from
-    the operator's home/peristyle/.env via PG* variables).
-
-    Cached for the process lifetime. Reads the .env file once on
-    first call, then never touches disk again.
-    """
-    if db_name in _DSN_CACHE:
-        return _DSN_CACHE[db_name]
-    with _DSN_LOCK:
-        if db_name in _DSN_CACHE:
-            return _DSN_CACHE[db_name]
-        if db_name == "harness":
-            _DSN_CACHE[db_name] = _read_url_from_envfile(
-                ENV_FILE, "DATABASE_URL"
-            )
-        elif db_name == "peristyle":
-            _DSN_CACHE[db_name] = _build_peristyle_dsn(
-                HOME_DIR / ".env"
-            )
-        else:
-            raise ValueError(
-                f"unknown db_name {db_name!r}; expected 'harness' or 'peristyle'"
-            )
-        return _DSN_CACHE[db_name]
-
-
-def _read_url_from_envfile(path: Path, key: str) -> str:
-    """Tiny dotenv reader — only handles KEY=VALUE, ignores comments
-    and blank lines. The harness .env is well-formed (no export,
-    no multiline, no quoted values with embedded newlines), so
-    this is enough. Don't add dependencies; we already have
-    python-dotenv in the harness venv if we ever need it."""
-    text = path.read_text(encoding="utf-8", errors="replace")
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        m = re.match(rf"^{re.escape(key)}\s*=\s*(.*)$", line)
-        if m:
-            val = m.group(1).strip()
-            # Strip optional surrounding quotes
-            if (val.startswith('"') and val.endswith('"')) or (
-                val.startswith("'") and val.endswith("'")
-            ):
-                val = val[1:-1]
-            return val
-    raise FileNotFoundError(f"{key!r} not found in {path}")
-
 
 def _build_peristyle_dsn(path: Path) -> str:
     """The peristyle .env uses individual PG* variables, not a single

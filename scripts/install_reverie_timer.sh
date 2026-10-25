@@ -18,10 +18,6 @@ set -euo pipefail
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HARNESS_DIR"
 
-if [ -f .env ]; then
-    set -a; . ./.env; set +a
-fi
-
 UNIT_DIR="${HOME}/.config/systemd/user"
 SERVICE_FILE="$UNIT_DIR/harness-reverie.service"
 TIMER_FILE="$UNIT_DIR/harness-reverie.timer"
@@ -40,14 +36,15 @@ done
 read -r REVERIE_AT REVERIE_TZ REVERIE_ENABLED <<EOF
 $(python3 - <<'PY'
 import os, yaml
-from dotenv import load_dotenv
-load_dotenv(os.path.join(os.getcwd(), ".env"), override=False)
 
 def env(name, default=""):
+    # The optional escape hatch: a config value that is exactly ${VAR}
+    # is resolved from the process environment.
     v = os.environ.get(name)
     return default if v is None else v
 
-raw = yaml.safe_load(open("config.yaml").read())
+config_path = os.environ.get("HARNESS_CONFIG", "config.yaml")
+raw = yaml.safe_load(open(config_path).read())
 rv = (raw.get("reverie") or {})
 
 def resolve(v):
@@ -84,8 +81,8 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory=${HARNESS_DIR}
 ExecStart=${HARNESS_DIR}/scripts/trigger_reverie.sh
-# HARNESS_INTERNAL_TOKEN (and friends) come from the harness .env.
-EnvironmentFile=-${HARNESS_DIR}/.env
+# HARNESS_INTERNAL_TOKEN comes from config.yaml -- trigger_reverie.sh
+# reads it from there. There is no .env.
 # A reverie turn is a full agent turn - it can take minutes.
 TimeoutStartSec=3600
 

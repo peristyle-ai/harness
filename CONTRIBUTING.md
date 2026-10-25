@@ -21,7 +21,7 @@ Thanks for considering a contribution.
 
 ```bash
 pip install -r requirements.txt -r requirements-dev.txt
-cp .env.example .env
+cp config.yaml.example config.yaml
 python run.py --init-db
 python -m pytest tests/ -q
 ```
@@ -37,8 +37,9 @@ meaningful run.
 - **Memories are rows.** If a behaviour belongs in a memory, write it with the
   memory tools; if it belongs in the code, change the code. Do not create a
   second convention.
-- **Never commit a secret.** `.env` and `config.yaml` are git-ignored;
-  `config.yaml.example` is committed and contains only `${VAR}` references.
+- **Never commit a secret.** `config.yaml` is git-ignored — it holds the
+  API keys and the database password. `config.yaml.example` is committed
+  and holds safe values with `YOUR_..._HERE` where a secret belongs.
 - **A schema change is a migration.** Add a numbered file; do not edit an
   existing one that has shipped.
 

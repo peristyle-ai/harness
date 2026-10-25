@@ -26,11 +26,18 @@ set -euo pipefail
 HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$HARNESS_DIR"
 
-if [ -f .env ]; then
-    set -a; . ./.env; set +a
-fi
+# The internal token lives in config.yaml -- there is no .env.
+CONFIG="${HARNESS_CONFIG:-config.yaml}"
+[ -f "$CONFIG" ] || { echo "no $CONFIG -- copy config.yaml.example to config.yaml" >&2; exit 1; }
 
-: "${HARNESS_INTERNAL_TOKEN:?HARNESS_INTERNAL_TOKEN not set (check .env)}"
+HARNESS_INTERNAL_TOKEN=$(python3 - "$CONFIG" <<'PYEOF'
+import sys
+import yaml
+cfg = yaml.safe_load(open(sys.argv[1])) or {}
+print((cfg.get("security") or {}).get("internal_token") or "")
+PYEOF
+)
+: "${HARNESS_INTERNAL_TOKEN:?security.internal_token is not set in ${CONFIG}}"
 
 BASE_URL="${HARNESS_BASE_URL:-http://127.0.0.1:${HARNESS_PORT:-5010}}"
 LOG_TAG="harness-reverie"

@@ -47,6 +47,50 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
+      - name: the dependency lists agree
+        # pyproject.toml and requirements.txt carry the same list. Two
+        # lists is one too many -- they drift, and then `pip install .`
+        # installs something different from `pip install -r
+        # requirements.txt`, which is the command the README tells you
+        # to run.
+        run: |
+          python - <<'PY'
+          import re, sys, tomllib
+          from pathlib import Path
+
+          pyproject = tomllib.loads(Path("pyproject.toml").read_text())
+          declared = set(pyproject["project"]["dependencies"])
+
+          def norm(s):
+              # compare the package name and the extras, not the version
+              s = s.split(";")[0].strip()
+              name = re.split(r"[<>=!~\[]", s)[0].strip().lower()
+              extras = ""
+              m = re.search(r"\[([^\]]*)\]", s)
+              if m:
+                  extras = "[" + ",".join(sorted(x.strip() for x in m.group(1).split(","))) + "]"
+              return name + extras
+
+          declared = {norm(d) for d in declared}
+
+          required = set()
+          for line in Path("requirements.txt").read_text().splitlines():
+              line = line.strip()
+              if line and not line.startswith("#"):
+                  required.add(norm(line))
+
+          missing = required - declared
+          extra = declared - required
+          if missing or extra:
+              print("pyproject.toml and requirements.txt disagree")
+              for d in sorted(missing):
+                  print("  in requirements.txt but not in pyproject.toml:", d)
+              for d in sorted(extra):
+                  print("  in pyproject.toml but not in requirements.txt:", d)
+              sys.exit(1)
+          print("dependency lists agree:", len(declared), "packages")
+          PY
+
       - name: the schema
         # ONE file creates the whole schema: the shared public tables and
         # the agent's schema. It is idempotent, so it is safe to run once

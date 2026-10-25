@@ -48,7 +48,9 @@ coverage.xml
 *.log
 logs/
 
-# Local config / secrets (NEVER commit)
+# Local config / secrets (NEVER commit). There is no .env.example any
+# more: the configuration and the secrets live in config.yaml, and
+# config.yaml.example is the tracked template.
 .env
 .env.local
 .env.*.local

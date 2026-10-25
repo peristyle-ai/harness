@@ -54,15 +54,18 @@ cd harness
 pip install -r requirements.txt
 
 cp config.yaml.example config.yaml   # this install's config — never commit it
-cp .env.example .env          # DB, LLM, secrets — never commit it
-bash tools/migrate.sh         # the schema (needs the operator role)
-bash run.sh                   # serve on 127.0.0.1:5010
+chmod 600 config.yaml        # it holds the API keys and the DB password
+$EDITOR config.yaml          # fill in the YOUR_..._HERE values
+bash tools/migrate.sh        # the schema (needs the operator role)
+bash run.sh                  # serve on 127.0.0.1:5010
 ```
 
-`config.yaml.example` is committed and entirely `${VAR}`-based; every real
-value comes from the environment (see `.env.example`). `config.yaml` is
-this install's copy of it — it is **not** tracked, because an install
-edits it in place.
+There is **one** config file. `config.yaml.example` is the tracked
+template — safe values, and `YOUR_..._HERE` where a secret belongs.
+`config.yaml` is your copy of it: not tracked, mode 0600, and the only
+file the app reads. The app refuses to start if it is readable by
+anyone else, if a required value is empty, or if a placeholder is still
+in it.
 
 `tools/migrate.sh` applies `schema/init.sql` — one file that creates the
 whole schema: the shared public tables (the users table) and the agent's
@@ -120,8 +123,8 @@ harness/
 ├── scripts/              operational + diagnostic scripts (not the test suite)
 ├── tests/                pytest — the test suite
 ├── config.yaml.example   the config template (committed)
-├── config.yaml           this install's config (not committed)
-├── .env.example          every environment variable, documented
+├── config.yaml           this install's config (not committed, mode 0600)
+├── pyproject.toml        the package metadata and the dependency list
 ├── pytest.ini            pytest configuration (testpaths, collection rules)
 ├── run.sh                the gunicorn entrypoint
 └── LICENSE               MIT
@@ -147,9 +150,9 @@ pip install -r requirements.txt -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 
-The suite needs a Postgres instance and the environment variables in
-`.env.example`; the tests that need a live model or a live database skip
-themselves when it is not there.
+The suite needs a Postgres instance and a `DATABASE_URL`; the tests that
+need a live model or a live database skip themselves when it is not
+there.
 
 ## Documentation
 

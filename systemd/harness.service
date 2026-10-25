@@ -10,9 +10,12 @@
 #
 #   install dir  = the directory containing run.sh
 #   working dir  = <install dir>
-#   env file     = <install dir>/.env
+#   config file  = <install dir>/config.yaml
 #
-# To install somewhere else, edit the three paths below.
+# There is no EnvironmentFile: the configuration and the secrets live in
+# config.yaml, which the app reads at startup. It must be mode 0600.
+#
+# To install somewhere else, edit the paths below.
 [Unit]
 Description=Peristyle Harness
 After=network-online.target
@@ -21,7 +24,6 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/harness
-EnvironmentFile=%h/harness/.env
 Environment=PYTHONUNBUFFERED=1
 ExecStart=%h/harness/run.sh
 Restart=always

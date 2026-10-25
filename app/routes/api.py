@@ -295,7 +295,7 @@ def internal_timer():
         500: dispatch failure
     """
     # 1. Token check
-    expected = os.environ.get("HARNESS_INTERNAL_TOKEN", "")
+    expected = current_app.config["HARNESS_CONFIG_OBJ"].security.internal_token
     presented = request.headers.get("X-Harness-Token", "")
     if not expected or not presented or presented != expected:
         log.warning(
@@ -395,7 +395,7 @@ def internal_reverie():
         409: reverie disabled in config
         400: unknown agent
     """
-    expected = os.environ.get("HARNESS_INTERNAL_TOKEN", "")
+    expected = current_app.config["HARNESS_CONFIG_OBJ"].security.internal_token
     presented = request.headers.get("X-Harness-Token", "")
     if not expected or not presented or presented != expected:
         log.warning(
@@ -563,7 +563,7 @@ def internal_reverie_preview():
     before letting it loose. Same token auth as the other internal
     routes.
     """
-    expected = os.environ.get("HARNESS_INTERNAL_TOKEN", "")
+    expected = current_app.config["HARNESS_CONFIG_OBJ"].security.internal_token
     presented = request.headers.get("X-Harness-Token", "")
     if not expected or not presented or presented != expected:
         return jsonify({"error": "invalid or missing X-Harness-Token"}), 401

@@ -42,7 +42,7 @@ install:
 python3 tools/apply_install_config.py install/<name>.yaml
 ```
 
-which writes `config.yaml`, `.env`, the agent's identity files and the
+which writes `config.yaml`, the agent's identity files and the
 agent's schema SQL, and prints the remaining steps. See `README_INSTALL.md`.
 
 ## Writing a new one
