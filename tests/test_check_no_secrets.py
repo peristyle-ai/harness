@@ -140,7 +140,6 @@ def test_an_empty_repository_is_inconclusive_not_clean(tmp_path: Path):
 
 
 def test_the_allowlist_only_applies_to_its_own_place(repo: Path):
-    """The CI's throwaway password is fine in the CI, and nowhere else."""
     url = "postgresql://postgres:password@localhost:5432/harness\n"
     wf = repo / ".github" / "workflows"
     wf.mkdir(parents=True)
@@ -158,6 +157,42 @@ def test_the_allowlist_only_applies_to_its_own_place(repo: Path):
         "commit", "-qm", "app")
     code, out = scan(repo)
     assert code == 1, out
+
+
+def test_the_exemption_list_is_exactly_one_file():
+    """Only the scanner's own test file may be exempt, and it is pinned.
+
+    A file whose purpose is to contain secret-shaped strings cannot be
+    scanned for secret-shaped strings. That is the ONLY such file, and
+    the list is pinned here so it cannot grow quietly.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    try:
+        import check_no_secrets as scanner
+    finally:
+        sys.path.pop(0)
+
+    exempt = {pattern for pattern, _ in scanner.EXEMPT_PATHS}
+    assert exempt == {"tests/test_check_no_secrets.py"}, exempt
+
+    # the scanner's own SOURCE is not exempt: it must scan clean
+    assert scanner.is_exempt("scripts/check_no_secrets.py") is None
+
+    # and a secret anywhere else is not excused
+    assert scanner.excused("app/config.py",
+                            "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") is None
+
+
+def test_an_exempt_file_is_still_reported_as_exempted(repo: Path):
+    """The exemption is printed, not silent."""
+    (repo / "leak.txt").write_text("ghp_EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE\n")
+    git(repo, "add", "-A")
+    git(repo, "-c", "user.email=t@example.com", "-c", "user.name=t",
+        "commit", "-qm", "oops")
+    code, out = scan(repo)
+    assert code == 1, out
+    # the repo under test is not this repo, so its files are not exempt
+    assert "exempted" not in out
 
 
 def test_the_repository_itself_is_clean():
