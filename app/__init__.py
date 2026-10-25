@@ -26,7 +26,7 @@ from .security import (
     install_log_redaction,
     install_rate_limiter,
     install_request_id,
-    sanity_check_env,
+    sanity_check_config,
 )
 
 
@@ -88,8 +88,16 @@ def create_app(config: AppConfig | None = None) -> Flask:
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
     )
 
-    env_file = Path(os.environ.get("HARNESS_CONFIG", "config.yaml")).parent / ".env"
-    sanity_check_env(env_file)
+    # The operator's config holds the API key and the database password,
+    # so it must be mode 0600, complete, and free of placeholders. This
+    # is the check that used to be on .env.
+    config_path = Path(os.environ.get("HARNESS_CONFIG", "config.yaml"))
+    sanity_check_config(config_path)
+
+    # The sql_query tool needs the harness database URL. It used to read
+    # DATABASE_URL out of the .env; the config is the source of truth now.
+    from .agent.tools._safety import set_harness_dsn
+    set_harness_dsn(cfg.db.url)
 
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config["SECRET_KEY"] = cfg.app.secret_key
@@ -99,14 +107,12 @@ def create_app(config: AppConfig | None = None) -> Flask:
     # cap on request body size (multipart bodies included); requests
     # over the limit get a 413 before the view runs. Default 10 MiB.
     # HARNESS_UPLOAD_DIR is the on-disk location for stored files.
-    upload_dir = os.environ.get(
-        "HARNESS_UPLOAD_DIR",
-        str(Path(__file__).resolve().parent.parent / "uploads"),
-    )
+    # The upload directory and the size cap come from the config. The
+    # environment variable still overrides the directory, because that is
+    # the one an operator changes most often (a different disk).
+    upload_dir = os.environ.get("HARNESS_UPLOAD_DIR") or cfg.uploads.dir
     app.config["HARNESS_UPLOAD_DIR"] = upload_dir
-    app.config["HARNESS_MAX_UPLOAD_BYTES"] = int(
-        os.environ.get("HARNESS_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))
-    )
+    app.config["HARNESS_MAX_UPLOAD_BYTES"] = int(cfg.uploads.max_bytes)
     # MAX_CONTENT_LENGTH must be a little above the per-file cap so
     # a multipart body with the file + a small form envelope still
     # fits; the per-file cap is re-checked in the view.

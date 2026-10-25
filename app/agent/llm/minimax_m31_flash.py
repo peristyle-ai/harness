@@ -101,11 +101,15 @@ class LLM(BaseLLM):
         # the same `_Llm.thinking` field without conflict. When None,
         # the field is omitted and MiniMax defaults to effort=max.
         self.thinking = getattr(config.llm, "thinking", None)
-        # SSE streaming on by default (2026-10-21). Rolls back instantly by
-        # setting LLM_STREAMING=0 in .env and restarting -- no code change.
+        # SSE streaming on by default (2026-10-21). The config carries the
+        # default (llm.streaming); the LLM_STREAMING environment variable
+        # overrides it, so a rollback is still one variable and a restart,
+        # with no edit to the config file.
         import os as _os
-        _flag = _os.environ.get("LLM_STREAMING", "1").strip().lower()
-        self.streaming = _flag not in ("0", "false", "no", "off")
+        _flag = _os.environ.get("LLM_STREAMING")
+        if _flag is None:
+            _flag = "1" if getattr(config.llm, "streaming", True) else "0"
+        self.streaming = _flag.strip().lower() not in ("0", "false", "no", "off")
         # Single shared client. HTTP/2 keeps a persistent connection to
         # the MiniMax endpoint — saves ~1s per call vs fresh connections.
         self._client = httpx.Client(

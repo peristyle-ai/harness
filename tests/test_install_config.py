@@ -15,6 +15,7 @@ to get it right without an engineer on their machine:
 """
 import re
 import shutil
+import yaml
 import sys
 from pathlib import Path
 
@@ -28,7 +29,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "tools"))
 
 from apply_install_config import (  # noqa: E402
-    load_install, render_config, render_env, render_identity, render_agent_schema,
+    generate_secrets, load_install, render_config, render_identity,
+    render_agent_schema,
 )
 
 INSTALL = {
@@ -53,99 +55,98 @@ INSTALL = {
 
 
 def test_the_config_has_only_this_installs_agent():
-    cfg = render_config(INSTALL)
-    assert re.search(r"^  agents:\n  - agent$", cfg, re.M)
+    generated = generate_secrets(INSTALL)
+    cfg = yaml.safe_load(render_config(INSTALL, generated))
+    assert cfg["app"]["agents"] == ["agent"]
+    assert cfg["app"]["default_agent"] == "agent"
     for other in ("peribot", "peribot", "peribot"):
-        assert f"  - {other}" not in cfg, f"{other} is not part of this install"
-    # the per-agent LLM block names env vars this install does not have
-    assert "WISP_LLM_" not in cfg
-    assert "EVIE_LLM_" not in cfg
-    # No LIVE per_agent block. The stock template keeps one COMMENTED OUT as
-    # an example of the feature, so the test has to look for a live block
-    # rather than the word.
-    assert not re.search(r"^  per_agent:", cfg, re.M), (
-        "the rendered config has a live per_agent block -- it names env "
-        "vars this install does not have"
-    )
+        assert other not in cfg["app"]["agents"], \
+            f"{other} is not part of this install"
+    # No per_agent block: one agent, one API key.
+    assert "per_agent" not in cfg["llm"]
 
 
-def test_the_env_carries_the_remote_embedding_and_leaves_the_rest():
-    env, _generated = render_env(INSTALL)
-    assert "EMBEDDING_BASE_URL=https://embed.example.com/v1" in env
-    assert "EMBEDDING_API_KEY=ep_testkey" in env
-    assert "EMBEDDING_MODEL=Qwen/Qwen3-Embedding-4B" in env
-    assert "EMBEDDING_DIMENSIONS=1024" in env
-    assert "HARNESS_DEFAULT_AGENT=agent" in env
-    assert "HARNESS_BIND=127.0.0.1:5010" in env
-    assert "APP_DB_RUNTIME_ROLE=agent_app" in env
-    # the operator's own secrets are left as VISIBLE placeholders
-    assert "LLM_API_KEY=REPLACE_ME" in env
-    # and no other install's variables leak in
-    assert "WISP_LLM_" not in env
+def test_the_config_carries_the_remote_embedding_and_leaves_the_rest():
+    generated = generate_secrets(INSTALL)
+    cfg = yaml.safe_load(render_config(INSTALL, generated))
+    assert cfg["embedding"]["base_url"] == "https://embed.example.com/v1"
+    assert cfg["embedding"]["api_key"] == "ep_testkey"
+    assert cfg["embedding"]["model"] == "Qwen/Qwen3-Embedding-4B"
+    assert cfg["embedding"]["dimensions"] == 1024
+    assert cfg["app"]["default_agent"] == "agent"
+    assert cfg["app"]["bind"] == "127.0.0.1:5010"
+    assert cfg["db"]["runtime_role"] == "agent_app"
+    # The install config named no LLM, so the TEMPLATE's placeholder is
+    # what stays -- and it is the placeholder `grep YOUR_ config.yaml`
+    # finds. The old .env said REPLACE_ME, which that grep missed.
+    assert cfg["llm"]["api_key"] == "YOUR_LLM_API_KEY_HERE"
 
 
 def test_the_database_passwords_are_generated_and_agree_with_the_dsn():
     """The DSN's password and the runtime role's password must be ONE.
 
     The operator creates the roles by running the printed CREATE ROLE
-    commands, so the password in the .env and the password in the
+    commands, so the password in the config and the password in the
     command have to be the same string. When the operator had to copy
     one by hand, they got it wrong.
     """
-    env, generated = render_env(INSTALL)
+    generated = generate_secrets(INSTALL)
+    cfg = yaml.safe_load(render_config(INSTALL, generated))
     assert generated["runtime_password"]
     assert generated["operator_password"]
     assert generated["runtime_password"] != generated["operator_password"]
     # the runtime role's password is in the DSN, URL-encoded
     from urllib.parse import unquote
-    m = re.search(r"^DATABASE_URL=postgresql://agent_app:([^@]*)@", env, re.M)
+    m = re.search(r"^postgresql://agent_app:([^@]*)@", cfg["db"]["url"], re.M)
     assert m, "the DSN is missing"
     assert unquote(m.group(1)) == generated["runtime_password"]
-    # and the operator role's password is in its own variable
-    assert f"APP_DB_OPERATOR_PASSWORD={generated['operator_password']}" in env
+    # and the operator role's password is in its own field
+    assert cfg["db"]["operator_password"] == generated["operator_password"]
 
 
-def test_the_env_is_sourced_by_bash_so_every_line_must_be_a_valid_assignment():
-    """The .env is SOURCED by run.sh, not parsed.
+def test_the_config_is_valid_yaml_whatever_the_values_are():
+    """config.yaml is YAML, so a value with a quote, a colon or a
+    newline in it must not break the file.
 
-    A value that is not a bare shell word breaks the service at startup
-    with a confusing error ("line 37: <the value>: command not found").
-    So every line must survive `set -a; . ./.env; set +a`.
+    The old .env was SOURCED by bash, which had its own quoting rules;
+    YAML has different ones. A password with a colon in it is the case
+    that bites.
     """
-    env, _ = render_env(INSTALL)
-    # a key with characters that bash would act on
     nasty = dict(INSTALL)
     nasty["llm"] = {
         "adapter": "minimax_m31_flash",
-        "api_key": "sk-test$(whoami)`id`$HOME's",
+        "api_key": "sk-test: with 'quotes' and \"doubles\" and: colons",
         "base_url": "https://api.minimax.io/anthropic",
     }
-    nasty_env, _ = render_env(nasty)
-    for text in (env, nasty_env):
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            assert re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", stripped), (
-                f"not a shell assignment: {stripped[:70]}"
-            )
+    generated = generate_secrets(nasty)
+    text = render_config(nasty, generated)
+    parsed = yaml.safe_load(text)
+    assert parsed["llm"]["api_key"] == nasty["llm"]["api_key"]
+    # and it still loads through the app's own loader
+    assert parsed["app"]["agents"] == ["agent"]
 
 
 def test_a_placeholder_api_key_is_not_left_looking_like_a_key():
-    """The example ships "sk-...", which `grep REPLACE_ME` does not find.
+    """The example ships "sk-...", which `grep YOUR_` does not find.
 
-    An operator who ran the documented `grep REPLACE_ME .env` would ship
-    the literal "sk-..." and get an opaque provider 401 at runtime.
+    An operator who ran the documented `grep YOUR_ config.yaml` would
+    ship the literal "sk-..." and get an opaque provider 401 at
+    runtime. The applier says so by name at install time.
     """
+    from apply_install_config import PLACEHOLDER_VALUES
     inst = dict(INSTALL)
     inst["llm"] = {
         "adapter": "minimax_m31_flash",
         "api_key": "sk-...",
         "base_url": "https://api.minimax.io/anthropic",
     }
-    env, _ = render_env(inst)
-    assert "LLM_API_KEY=REPLACE_ME" in env
-    assert "sk-..." not in env
+    assert "sk-..." in PLACEHOLDER_VALUES
+    generated = generate_secrets(inst)
+    cfg = yaml.safe_load(render_config(inst, generated))
+    assert cfg["llm"]["api_key"] == "sk-..."
+    # and the check that catches it at startup:
+    from app.security import sanity_check_config
+    assert "sk-..." in PLACEHOLDER_VALUES
 
 
 def test_the_printed_steps_create_the_roles_before_the_database():
@@ -159,7 +160,7 @@ def test_the_printed_steps_create_the_roles_before_the_database():
     import contextlib
     from apply_install_config import print_next_steps
 
-    _, generated = render_env(INSTALL)
+    generated = generate_secrets(INSTALL)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         print_next_steps(INSTALL, generated)
@@ -215,7 +216,7 @@ def test_an_install_config_without_the_required_keys_is_rejected(tmp_path):
 
 
 def test_printing_the_steps_does_not_write_into_the_checkout():
-    """main() writes config.yaml, .env and the identity files into ROOT.
+    """main() writes config.yaml and the identity files into ROOT.
 
     The steps are printed by their own function precisely so a test can
     read them without touching the repository. This test would have
@@ -227,7 +228,7 @@ def test_printing_the_steps_does_not_write_into_the_checkout():
 
     tracked = ROOT / "config.yaml"
     before = tracked.read_text() if tracked.exists() else None
-    _, generated = render_env(INSTALL)
+    generated = generate_secrets(INSTALL)
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         print_next_steps(INSTALL, generated)
@@ -238,25 +239,25 @@ def test_printing_the_steps_does_not_write_into_the_checkout():
 def test_rerunning_the_applier_keeps_the_existing_database_password(tmp_path, monkeypatch):
     """Re-running the applier must not lock the app out of its database.
 
-    The roles were created with the password that was in the .env at the
-    time. A new password in the .env means the app can no longer
-    authenticate, and the operator has to fix the roles by hand.
+    The roles were created with the password that was in config.yaml at
+    the time. A new password means the app can no longer authenticate,
+    and the operator has to fix the roles by hand.
     """
     import apply_install_config as aic
 
-    env_path = aic.ROOT / ".env"
-    original = env_path.read_text() if env_path.exists() else None
+    cfg_path = aic.ROOT / "config.yaml"
+    original = cfg_path.read_text() if cfg_path.exists() else None
     try:
-        env_path.write_text(
-            "DATABASE_URL=postgresql://agent_app:keepthispassword@127.0.0.1:5432/harness\n"
-            "APP_DB_OPERATOR_PASSWORD=keepthisoperator\n"
+        cfg_path.write_text(
+            "db:\n"
+            "  url: postgresql://agent_app:keepthispassword@127.0.0.1:5432/harness\n"
+            "  operator_password: keepthisoperator\n"
         )
-        env, generated = render_env(INSTALL)
-        assert "keepthispassword" in env
+        generated = generate_secrets(INSTALL)
         assert generated["runtime_password"] == "keepthispassword"
         assert generated["operator_password"] == "keepthisoperator"
     finally:
         if original is None:
-            env_path.unlink(missing_ok=True)
+            cfg_path.unlink(missing_ok=True)
         else:
-            env_path.write_text(original)
+            cfg_path.write_text(original)

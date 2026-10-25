@@ -9,7 +9,6 @@ a service restart on 2026-10-21 21:12.
 Uses a throwaway user id so it does not touch anyone's conversation.
 
 Usage:
-  set -a; . ./.env; set +a
   .venv/bin/python scripts/check_sigterm_persist.py [agent] [user_id]
 """
 from __future__ import annotations

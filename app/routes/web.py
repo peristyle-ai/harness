@@ -500,7 +500,7 @@ def admin_last_memories_view():
     # Query the 20 most recent rows. The harness uses the peristyle
     # user's harness_app role on the harness DB (read+write on
     # peribot.* via the schema migration's GRANTs).
-    db_url = os.environ.get("DATABASE_URL")
+    db_url = current_app.config["HARNESS_CONFIG_OBJ"].db.url
     rows = []
     try:
         with psycopg.connect(db_url, autocommit=True) as conn:

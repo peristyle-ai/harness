@@ -1,8 +1,20 @@
 """Config loading for harness.
 
-Reads config.yaml + .env into a single AppConfig dataclass tree.
-Env vars are resolved via ${VAR} substitution; missing required vars
-cause a clear startup failure (no silent defaulting for secrets).
+Reads config.yaml into a single AppConfig dataclass tree. There is ONE
+config file: the operator's own `config.yaml`, which is not tracked in
+git because it holds the API keys and the database password.
+
+A value that is exactly `${VAR}` is resolved from the process environment
+when the variable is set. That is the escape hatch for "this value comes
+from somewhere else" -- a systemd credential, a container secret, a
+temporary override for a rollback. It is NOT how the stock config works:
+`config.yaml.example` carries literal values, and a literal value that
+merely CONTAINS `${...}` is left exactly as it is (so a password with a
+`${` in it is never mangled).
+
+A reference to a variable that is not set is an error, not a silent
+default -- the same rule as before, for the same reason: a missing secret
+must fail at startup, not at the first API call.
 """
 from __future__ import annotations
 
@@ -13,23 +25,27 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from dotenv import load_dotenv
 
-ENV_REF_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+# A WHOLE-VALUE reference: the string is exactly ${VAR}. A reference
+# embedded in a longer string is left alone (see the module docstring).
+ENV_REF_RE = re.compile(r"^\$\{([A-Z_][A-Z0-9_]*)\}$")
+# A reference ANYWHERE in a string -- used only to detect one and say so.
+ENV_REF_ANYWHERE_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
 
 def _resolve_env(value: Any) -> Any:
-    """Recursively resolve ${VAR} references against the process env."""
+    """Recursively resolve whole-value ${VAR} references against the env."""
     if isinstance(value, str):
-        def replace(m: re.Match[str]) -> str:
-            var = m.group(1)
-            v = os.environ.get(var)
-            if v is None:
-                raise RuntimeError(
-                    f"config: missing env var ${var} referenced in config.yaml"
-                )
-            return v
-        return ENV_REF_RE.sub(replace, value)
+        m = ENV_REF_RE.match(value)
+        if not m:
+            return value
+        var = m.group(1)
+        v = os.environ.get(var)
+        if v is None:
+            raise RuntimeError(
+                f"config: missing env var ${var} referenced in config.yaml"
+            )
+        return v
     if isinstance(value, dict):
         return {k: _resolve_env(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -57,6 +73,18 @@ class _SecurityHeaders:
 class _Security:
     headers: _SecurityHeaders
     rate_limit: _RateLimit
+    # The shared secret for the service-to-service routes
+    # (/api/v1/internal/*). It is checked against the X-Harness-Token
+    # header. It lives in the config because the config is the only
+    # file the operator has to protect.
+    internal_token: str = ""
+
+
+@dataclass(frozen=True)
+class _Uploads:
+    """Where uploaded files land and how big they may be."""
+    dir: str = "uploads"
+    max_bytes: int = 10 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -200,6 +228,12 @@ class _Db:
     operator_role: str
     runtime_role: str
     database: str
+    # The OPERATOR role's password. It is used by tools/migrate.sh and
+    # tools/backup.sh, which connect as the operator role (the runtime
+    # role in `url` cannot create a table). Empty means the operator
+    # connects over the unix socket with PEER AUTH, which needs no
+    # password -- the OS user must have the same name as the role.
+    operator_password: str = ""
 
 
 @dataclass(frozen=True)
@@ -216,6 +250,10 @@ class _Llm:
     # dict = pass through (e.g. {"type": "disabled"} or {"type": "enabled", "budget": N}).
     # Only the glm_5_3_flash adapter reads this; other adapters ignore it.
     thinking: dict | None = None
+    # SSE streaming on by default. The LLM_STREAMING environment variable
+    # still overrides this at runtime, so a rollback does not need an
+    # edit to the config file.
+    streaming: bool = True
 
 
 @dataclass(frozen=True)
@@ -247,6 +285,7 @@ class AppConfig:
     prompt: _Prompt
     reverie: _Reverie
     security: _Security
+    uploads: _Uploads = field(default_factory=_Uploads)
 
 
 
@@ -283,15 +322,24 @@ def _make_llm(d: dict) -> _Llm:
         timeout_s=int(d["timeout_s"]),
         temperature=float(d["temperature"]),
         thinking=thinking,
+        # SSE streaming. Optional in the config: a per_agent block that
+        # omits it gets the default (on).
+        streaming=bool(d.get("streaming", True)),
     )
 
 
 def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
-    """Load config.yaml (with .env auto-loaded from same dir) into AppConfig."""
+    """Load config.yaml into AppConfig.
+
+    The path defaults to `config.yaml` in the current directory. There is
+    no .env: the operator's config file holds the values.
+    """
     config_path = Path(path)
-    env_path = config_path.parent / ".env"
-    if env_path.exists():
-        load_dotenv(env_path, override=False)
+    if not config_path.exists():
+        raise RuntimeError(
+            f"config: {config_path} not found. Copy config.yaml.example to "
+            "config.yaml and fill in the API keys and the database password."
+        )
 
     raw = yaml.safe_load(config_path.read_text())
     raw = _resolve_env(raw)
@@ -306,6 +354,7 @@ def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
     sec = raw["security"]
     pr = raw.get("prompt", {})
     rv = raw.get("reverie", {})
+    up = raw.get("uploads", {})
 
     agents_list = tuple(a.get("agents") or (a["default_agent"],))
     pie_root_raw = a.get("pie_root") or "pie"
@@ -331,6 +380,7 @@ def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
             operator_role=db["operator_role"],
             runtime_role=db["runtime_role"],
             database=db["database"],
+            operator_password=str(db.get("operator_password") or ""),
         ),
         llm=_make_llm(llm),
         embedding=_Embedding(
@@ -409,5 +459,10 @@ def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
                 chat=sec["rate_limit"]["chat"],
                 memory=sec["rate_limit"]["memory"],
             ),
+            internal_token=str(sec.get("internal_token") or ""),
+        ),
+        uploads=_Uploads(
+            dir=str(up.get("dir") or "uploads"),
+            max_bytes=int(up.get("max_bytes") or 10 * 1024 * 1024),
         ),
     )

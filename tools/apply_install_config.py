@@ -7,7 +7,7 @@ machine. This writes, from that one file:
 
   * config.yaml    — the harness config for THIS install (one agent, no
                      per-agent LLM overrides, the embedding block)
-  * .env           — the environment, with the install's values filled in and
+  * (no .env)      — the values live in config.yaml, which is the only
                      the rest left as clearly-marked placeholders
   * pie/<agent>/identity/  — the agent's identity files, from the default
                      template (the sysadmin identity) with the name filled in
@@ -27,6 +27,8 @@ import re
 import secrets
 import sys
 from pathlib import Path
+
+import yaml
 from urllib.parse import quote
 
 try:
@@ -58,7 +60,7 @@ def load_install(path: Path) -> dict:
 
 # A value that still looks like the EXAMPLE's placeholder is a placeholder.
 # The example ships "sk-..." and "ep-...", which is NOT what "REPLACE_ME"
-# means -- so an operator who ran `grep REPLACE_ME .env` would not see the
+# means -- so an operator who ran `grep YOUR_ config.yaml` would not see the
 # LLM key, would ship the literal "sk-...", and would get an opaque 401
 # from the provider at runtime instead of a clear "fill this in".
 PLACEHOLDER_VALUES = {"", "sk-...", "ep-...", "REPLACE_ME", "changeme", "..."}
@@ -68,185 +70,136 @@ def _is_placeholder(value: str) -> bool:
     return (value or "").strip() in PLACEHOLDER_VALUES
 
 
-def _sh_quote(value: str) -> str:
-    """Quote a value for the .env, which is SOURCED BY BASH.
-
-    run.sh does `set -a; . ./.env; set +a`, so a value that is not a
-    bare shell word is a bug: a `$` would be expanded, a space would
-    split the line, and a quote would end it. Single quotes make the
-    value literal -- the only escape needed inside them is a quote
-    itself.
-    """
-    if value == "":
-        return ""
-    if re.fullmatch(r"[A-Za-z0-9_@%+=:,./-]+", value):
-        return value  # already safe unquoted
-    return "'" + value.replace("'", "'\''") + "'"
-
-
 def _gen_password() -> str:
     """A password for a database role.
 
-    URL-safe so it can go straight into DATABASE_URL without encoding,
-    and shell-safe so the .env does not need quoting.
+    URL-safe so it can go straight into the postgresql:// URL in
+    config.yaml without encoding.
     """
     return secrets.token_urlsafe(18).replace("-", "_").replace("~", "_")
 
 
-def render_config(inst: dict) -> str:
-    """config.yaml for this install.
+def render_config(inst: dict, generated: dict[str, str]) -> str:
+    """config.yaml for this install -- ONE file, with the real values.
 
-    The stock template (config.yaml.example) is ${VAR}-based, so most of
-    it works as-is. Two things differ: the agent list (one agent, not the
-    stock one) and the per-agent LLM overrides (the stock template keeps
-    those commented out, and this install does not need them -- the global
-    llm block applies instead).
+    The template (config.yaml.example) carries literal values, so this
+    loads it as YAML, puts this install's values into it, and writes it
+    back. Doing it on the parsed structure rather than by string
+    substitution is what keeps the YAML valid whatever the values are.
+
+    The per-agent LLM overrides are dropped: this install has one agent,
+    and a per_agent entry is a wholesale replacement of the global block,
+    so the agent would need a second API key for no reason.
     """
-    src = (ROOT / "config.yaml.example").read_text()
-    agent = inst["agent_name"]
+    cfg = yaml.safe_load((ROOT / "config.yaml.example").read_text())
 
-    # The agent list.
-    src = re.sub(
-        r"^(  agents:\n)(?:  - .*\n)+",
-        lambda m: m.group(1) + f"  - {agent}\n",
-        src, count=1, flags=re.M,
-    )
-
-    # Drop the per-agent LLM block if it is live in the template: it is a
-    # wholesale replacement of the global block for those agents, and this
-    # install has one agent that uses the global block. In the stock
-    # template the block is commented out, so this is a no-op -- but a
-    # template that has it live must still work.
-    src = re.sub(
-        r"\n  per_agent:\n(?:.*\n)*?(?=[a-z_]+:)",
-        "\n",
-        src, count=1,
-    )
-    return src
-
-
-def render_env(inst: dict) -> tuple[str, dict[str, str]]:
-    """The .env for this install, and the secrets generated into it.
-
-    The generated passwords are returned so the printed steps can
-    carry the exact CREATE ROLE commands -- the operator must not
-    have to copy a password between two places by hand.
-    """
-    src = (ROOT / ".env.example").read_text()
-    emb = inst["embedding"]
     agent = inst["agent_name"]
     db = inst["database"]
-
-    def set_var(text: str, name: str, value: str) -> str:
-        # The value is quoted for bash: the .env is SOURCED, not parsed.
-        q = _sh_quote(value)
-        if re.search(rf"^{re.escape(name)}=.*$", text, flags=re.M):
-            return re.sub(
-                rf"^{re.escape(name)}=.*$", lambda _m: f"{name}={q}",
-                text, count=1, flags=re.M,
-            )
-        return text.rstrip() + f"\n{name}={q}\n"
-
-    # --- the install's own values -----------------------------------------
     llm = inst.get("llm") or {}
-    if llm:
-        src = set_var(src, "LLM_ADAPTER", llm.get("adapter", "minimax_m31_flash"))
-        # A value that is still the EXAMPLE's placeholder is NOT a key.
-        # Leaving "sk-..." in place would sail past `grep REPLACE_ME .env`
-        # and fail at runtime with an opaque provider 401.
-        api_key = llm.get("api_key", "")
-        src = set_var(src, "LLM_API_KEY",
-                      "REPLACE_ME" if _is_placeholder(api_key) else api_key)
-        base_url = llm.get("base_url", "")
-        src = set_var(src, "LLM_BASE_URL",
-                      "REPLACE_ME" if _is_placeholder(base_url) else base_url)
-        src = set_var(src, "LLM_MODEL", llm.get("model", "MiniMax-M3.1-Flash"))
-        src = set_var(src, "LLM_MAX_TOKENS", str(llm.get("max_tokens", 524288)))
-        src = set_var(src, "LLM_TIMEOUT_S", str(llm.get("timeout_s", 180)))
-        src = set_var(src, "LLM_TEMPERATURE", str(llm.get("temperature", 0.7)))
-    src = set_var(src, "EMBEDDING_BASE_URL", emb["base_url"])
-    src = set_var(src, "EMBEDDING_MODEL", emb.get("model", "Qwen/Qwen3-Embedding-4B"))
-    src = set_var(src, "EMBEDDING_DIMENSIONS", str(emb.get("dimensions", 1024)))
-    emb_key = emb.get("api_key", "")
-    src = set_var(src, "EMBEDDING_API_KEY",
-                  "REPLACE_ME" if _is_placeholder(emb_key) else emb_key)
-    src = set_var(src, "EMBEDDING_TIMEOUT_S", str(emb.get("timeout_s", 30)))
-    src = set_var(src, "HARNESS_DEFAULT_AGENT", agent)
-    src = set_var(src, "HARNESS_BIND", inst.get("bind", "127.0.0.1:5010"))
-    src = set_var(src, "HARNESS_DB", db)
-    src = set_var(src, "HARNESS_INSTALLATION_DATABASE", db)
-    src = set_var(src, "HARNESS_PIE_ROOT", inst.get("pie_root", "harness/pie"))
-    src = set_var(src, "APP_DB_OPERATOR_ROLE", inst.get("operator_role", agent))
-    src = set_var(src, "APP_DB_RUNTIME_ROLE", inst.get("runtime_role", f"{agent}_app"))
+    emb = inst["embedding"]
 
-    # --- the database passwords: GENERATED, not guessed -------------------
-    # The operator role's password and the runtime role's password are
-    # chosen here, not by the operator: they have to agree with the
-    # DATABASE_URL in this same file, and a human copying a password
-    # between two places gets it wrong. The .env is chmod 600 and is
-    # gitignored, so the passwords live there.
-    runtime_pw = _gen_password()
-    operator_pw = _gen_password()
+    app = cfg["app"]
+    app["agents"] = [agent]
+    app["default_agent"] = agent
+    app["bind"] = inst.get("bind", "127.0.0.1:5010")
+    app["pie_root"] = inst.get("pie_root", "harness/pie")
+    app["installation_database"] = db
+    app["secret_key"] = generated["secret_key"]
+
+    d = cfg["db"]
+    runtime_role = inst.get("runtime_role", agent + "_app")
+    d["runtime_role"] = runtime_role
+    d["operator_role"] = inst.get("operator_role", agent)
+    d["database"] = db
+    d["url"] = (f"postgresql://{runtime_role}:"
+                f"{quote(generated['runtime_password'], safe='')}"
+                f"@127.0.0.1:5432/" + db)
+    # An empty operator password means peer auth over the unix socket,
+    # which is the normal case for a local install.
+    d["operator_password"] = generated["operator_password"]
+
+    if llm:
+        cfg["llm"]["adapter"] = llm.get("adapter", "minimax_m31_flash")
+        cfg["llm"]["api_key"] = llm.get("api_key", "YOUR_LLM_API_KEY_HERE")
+        cfg["llm"]["base_url"] = llm.get("base_url", "https://api.minimax.io/anthropic")
+        cfg["llm"]["model"] = llm.get("model", "MiniMax-M3.1-Flash")
+        cfg["llm"]["max_tokens"] = int(llm.get("max_tokens", 524288))
+        cfg["llm"]["timeout_s"] = int(llm.get("timeout_s", 180))
+        cfg["llm"]["temperature"] = float(llm.get("temperature", 0.7))
+
+    cfg["embedding"]["base_url"] = emb["base_url"]
+    cfg["embedding"]["api_key"] = emb.get("api_key", "YOUR_EMBEDDING_API_KEY_HERE")
+    cfg["embedding"]["model"] = emb.get("model", "Qwen/Qwen3-Embedding-4B")
+    cfg["embedding"]["dimensions"] = int(emb.get("dimensions", 1024))
+    cfg["embedding"]["timeout_s"] = int(emb.get("timeout_s", 30))
+
+    # The per-agent block goes: one agent, one API key.
+    cfg["llm"].pop("per_agent", None)
+
+    cfg["security"]["internal_token"] = generated["internal_token"]
+    cfg["reverie"]["user_email"] = inst.get("operator_email", "")
+
+    header = (
+        "# The harness config for THIS install. Generated by\n"
+        "#   tools/apply_install_config.py from config.yaml.example\n"
+        "#\n"
+        "# It holds the API keys and the database password, so it is mode\n"
+        "# 0600 and it is NOT tracked in git. Edit it in place.\n"
+        "#\n"
+        "# config.yaml.example is the annotated template this came from --\n"
+        "# it explains what each value is for. This file has the same\n"
+        "# structure with this install's real values in it.\n"
+        "#\n"
+    )
+    body = yaml.safe_dump(cfg, sort_keys=False, default_flow_style=False,
+                           width=100, allow_unicode=True)
+    return header + body
+
+
+def generate_secrets(inst: dict) -> dict:
+    """The secrets this install needs, generated rather than guessed.
+
+    The runtime role's password and the operator role's password have to
+    agree with the DATABASE_URL in config.yaml, and a human copying a
+    password between two places gets it wrong. The session secret and the
+    internal token are generated because there is nothing to decide
+    about them and a predictable one is a weak one.
+
+    Re-running the applier on an install that is ALREADY WORKING must
+    not rotate the database password: the roles were created with the
+    old one, so a new password in config.yaml would lock the app out of
+    its own database. An existing, non-placeholder password is KEPT --
+    and the operator password with it, so the two still agree.
+    """
+    agent = inst["agent_name"]
     runtime_role = inst.get("runtime_role", agent + "_app")
 
-    # Re-running the applier on an install that is ALREADY WORKING must
-    # not rotate the database password: the roles were created with the
-    # old one, so a new password in the .env locks the app out of its
-    # own database. So an existing, non-placeholder password is KEPT --
-    # and the operator password is kept with it, so the two still agree.
+    runtime_pw = _gen_password()
+    operator_pw = _gen_password()
+
     existing_dsn = ""
     existing_op = ""
-    env_path = ROOT / ".env"
-    if env_path.exists():
+    cfg_path = ROOT / "config.yaml"
+    if cfg_path.exists():
         try:
-            old_env = env_path.read_text()
-        except OSError:
-            old_env = ""
-        m = re.search(r"^DATABASE_URL=postgresql://[^:]+:([^@]*)@", old_env, re.M)
+            old = yaml.safe_load(cfg_path.read_text()) or {}
+        except (OSError, Exception):
+            old = {}
+        old_db = old.get("db") or {}
+        m = re.search(r"^postgresql://[^:]+:([^@]*)@", str(old_db.get("url") or ""), re.M)
         if m:
             existing_dsn = m.group(1)
-        m = re.search(r"^APP_DB_OPERATOR_PASSWORD=(.+)$", old_env, re.M)
-        if m:
-            existing_op = m.group(1).strip().strip("'\"")
+        existing_op = str(old_db.get("operator_password") or "").strip().strip("'\"")
     if existing_dsn and existing_dsn != "REPLACE_ME":
         runtime_pw = existing_dsn
         if existing_op:
             operator_pw = existing_op
 
-    src = set_var(src, "DATABASE_URL",
-                  f"postgresql://{runtime_role}:{quote(runtime_pw, safe='')}"
-                  "@127.0.0.1:5432/" + db)
-    src = set_var(src, "APP_DB_OPERATOR_PASSWORD", operator_pw)
-
-    # --- the things the operator must choose -------------------------------
-    if not llm:
-        src = set_var(src, "LLM_API_KEY", "REPLACE_ME")
-        src = set_var(src, "LLM_BASE_URL", "REPLACE_ME")
-    # The app's own secret: generated, because there is nothing to decide
-    # about it and a predictable one is a weak one.
-    src = set_var(src, "HARNESS_SECRET_KEY", secrets.token_hex(32))
-    # The TLS pair is the operator's: it is the certificate for THEIR
-    # hostname, so it cannot be generated here.
-    src = set_var(src, "HARNESS_TLS_CERT", "REPLACE_ME")
-    src = set_var(src, "HARNESS_TLS_KEY", "REPLACE_ME")
-    src = set_var(src, "REVERIE_USER_EMAIL", inst.get("operator_email", ""))
-
-    # The per-agent LLM overrides belong to the OTHER agents: render_config
-    # dropped config.yaml's llm.per_agent block (this install has one
-    # agent), so the .env must not carry another agent's variables either.
-    # A var named <AGENT>_LLM_* is dropped unless <AGENT> is this
-    # install's agent.
-    own = f"{agent.upper()}_LLM_"
-    per_agent = re.compile(r"^[A-Z0-9_]+_LLM_[A-Z0-9_]+=")
-    kept = []
-    for line in src.splitlines():
-        if per_agent.match(line) and not line.startswith(own):
-            continue
-        kept.append(line)
-    src = "\n".join(kept) + "\n"
-    return src, {
+    return {
         "runtime_password": runtime_pw,
         "operator_password": operator_pw,
+        "secret_key": secrets.token_hex(32),
+        "internal_token": secrets.token_hex(32),
     }
 
 
@@ -310,7 +263,7 @@ def print_next_steps(inst: dict, generated: dict[str, str]) -> None:
     """Print the steps the operator still has to run, on this machine.
 
     Kept separate from main() so it can be tested WITHOUT writing into
-    the checkout: main() writes config.yaml, .env and the identity files
+    the checkout: main() writes config.yaml and the identity files
     into ROOT, and a test that did that would overwrite the repo.
     """
     agent = inst["agent_name"]
@@ -321,7 +274,7 @@ def print_next_steps(inst: dict, generated: dict[str, str]) -> None:
     print(f"  1. create the ROLES and the DATABASE, and install the EXTENSIONS")
     print(f"     (once, as a superuser -- pgvector's vector extension is not a")
     print(f"     trusted extension, so only a superuser may create it).")
-    print(f"     The passwords below are the ones already written into .env:")
+    print(f"     The passwords below are the ones already written into config.yaml:")
     print(f"       sudo -u postgres psql -c \"CREATE ROLE {op_role} LOGIN "
           f"PASSWORD '{generated['operator_password']}';\"")
     print(f"       sudo -u postgres psql -c \"CREATE ROLE {rt_role} LOGIN "
@@ -332,9 +285,9 @@ def print_next_steps(inst: dict, generated: dict[str, str]) -> None:
     print(f"  2. create the Python environment (the service runs from it):")
     print(f"       python3 -m venv .venv")
     print(f"       .venv/bin/pip install -r requirements.txt")
-    print(f"  3. fill in the remaining placeholders in .env (the LLM key, the")
-    print(f"     embedding key, the TLS certificate and key):")
-    print(f"       grep REPLACE_ME .env")
+    print(f"  3. fill in the remaining placeholders in config.yaml (the LLM")
+    print(f"     key, the embedding key, the TLS certificate and key):")
+    print(f"       grep -n YOUR_ config.yaml")
     print(f"  4. apply the schema AND the runtime role's grants:")
     print(f"       bash tools/migrate.sh {agent}")
     print(f"  5. create the first admin:")
@@ -353,7 +306,7 @@ def main() -> int:
     ap.add_argument("install_config", help="e.g. install/agent.yaml")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--force", action="store_true",
-                    help="overwrite an existing config.yaml / .env")
+                    help="overwrite an existing config.yaml")
     args = ap.parse_args()
 
     inst = load_install(Path(args.install_config))
@@ -363,10 +316,9 @@ def main() -> int:
     print(f"embedding      : {inst['embedding']['base_url']}")
     print(f"database       : {inst['database']} (schema {inst['schema']})")
 
-    env_text, generated = render_env(inst)
+    generated = generate_secrets(inst)
     writes = {
-        ROOT / "config.yaml": render_config(inst),
-        ROOT / ".env": env_text,
+        ROOT / "config.yaml": render_config(inst, generated),
         ROOT / "schema" / f"{agent}_schema.sql": render_agent_schema(inst),
     }
     identity = render_identity(inst)
@@ -383,7 +335,7 @@ def main() -> int:
     # so it is the only copy of this install's settings. Overwriting it
     # silently would destroy an existing install's configuration.
     if not args.force:
-        clash = [p for p in (ROOT / "config.yaml", ROOT / ".env") if p.exists()]
+        clash = [p for p in (ROOT / "config.yaml",) if p.exists()]
         if clash:
             die("refusing to overwrite " + ", ".join(str(p.relative_to(ROOT)) for p in clash)
                 + " -- this install already has one. Pass --force if you "
@@ -393,10 +345,21 @@ def main() -> int:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         print(f"  wrote {path.relative_to(ROOT)}")
+    # config.yaml holds the API keys and the database password.
     try:
-        os.chmod(ROOT / ".env", 0o600)
+        os.chmod(ROOT / "config.yaml", 0o600)
     except OSError:
         pass
+
+    # The keys the operator still has to fill in. A placeholder that
+    # reaches the app is an opaque 401 from the provider at runtime, so
+    # it is called out here, by name, at install time.
+    written = yaml.safe_load(writes[ROOT / "config.yaml"]) or {}
+    for section, key in (("llm", "api_key"), ("embedding", "api_key")):
+        val = str((written.get(section) or {}).get(key) or "")
+        if _is_placeholder(val):
+            print(f"  NOTE: {section}.{key} is still the example value "
+                  f"({val!r}). Edit config.yaml and set the real key.")
 
     print_next_steps(inst, generated)
     print()

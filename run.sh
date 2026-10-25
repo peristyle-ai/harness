@@ -1,11 +1,10 @@
 #!/bin/bash
 # gunicorn entrypoint for the harness app.
+#
+# There is no .env: the configuration and the secrets live in config.yaml
+# next to this script, and the app reads them from there.
 set -euo pipefail
 cd "$(dirname "$0")"
-
-if [ -f .env ]; then
-    set -a; . ./.env; set +a
-fi
 
 [ -d .venv ] && source .venv/bin/activate
 

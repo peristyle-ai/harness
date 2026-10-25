@@ -90,8 +90,9 @@ There is no LTS branch. Fixes land on `main`.
   sees SQL.
 - **Uploaded files.** User-supplied content with a size cap and a MIME
   allowlist — but it is still user content.
-- **The `.env` file** — contains the model key, the database URL and the
-  session secret. Mode 600, enforced at startup.
+- **The config file** — `config.yaml` holds the model key, the database
+  URL and password, the session secret and the internal token. Mode 600,
+  enforced at startup.
 
 ### What an attacker can do
 
@@ -319,15 +320,17 @@ chat UI sets them.
 
 ## Secrets
 
-- `.env` holds the model key, the database URL, the session secret, the
-  internal token and the TLS paths. It is git-ignored and must be mode
-  `0600`.
-- **The app refuses to start** if `.env` is world-readable, if
-  `HARNESS_SECRET_KEY`, `LLM_API_KEY` or `DATABASE_URL` is empty, or if
-  `LLM_API_KEY` still holds a `***…` placeholder. That check is
-  `security.sanity_check_env()` and it runs at startup.
-- The tracked `config.yaml.example` contains only `${VAR}` references.
-  The install's own `config.yaml` is not tracked.
+- `config.yaml` holds the model key, the database URL and password, the
+  session secret, the internal token and the TLS paths. It is git-ignored
+  and must be mode `0600`. There is no `.env`: one file, one thing to
+  protect.
+- **The app refuses to start** if `config.yaml` is readable by anyone
+  else, if `app.secret_key`, `db.url` or `llm.api_key` is empty, or if
+  one of them still holds a placeholder. That check is
+  `security.sanity_check_config()` and it runs at startup.
+- The tracked `config.yaml.example` holds safe values with
+  `YOUR_..._HERE` where a secret belongs. The install's own `config.yaml`
+  is not tracked.
 - The per-install `install/<name>.yaml` files carry real keys and are
   git-ignored.
 - The redaction filter masks `Authorization: Bearer <token>` and
@@ -373,7 +376,7 @@ yourself. A backup that is not restored from is not a backup.
 | **A03 Injection (SQL)** | Parametric SQL everywhere in `app/`; enforced by `tests/test_security.py::test_no_fstring_sql`. The read-only tool refuses write verbs. |
 | **A03 Injection (prompt)** | The model is not a boundary. The tools are: command classification, read-only SQL, a scrubbed environment, a scrubbed model output path, and the soft-flag confirmation flow. |
 | **A04 Insecure Design** | Single-purpose design; a documented and deliberately limited tool roster; a documented threat model; an explicit public surface. |
-| **A05 Security Misconfiguration** | `sanity_check_env()` refuses to start on a world-readable `.env`, an empty key or a leftover placeholder. The security headers are applied to every response. |
+| **A05 Security Misconfiguration** | `sanity_check_config()` refuses to start on a config readable by others, an empty required value or a leftover placeholder. The security headers are applied to every response. |
 | **A06 Vulnerable Components** | A hand-curated `requirements.txt` with upper bounds; two vendored browser libraries with their licences recorded in `app/static/THIRD_PARTY_NOTICES.md`. |
 | **A07 Identification & Auth Failures** | `pbkdf2:sha256` with a per-user salt, 30-day sessions, an `Origin` check plus `SameSite=Lax` for CSRF, 401 JSON for the API. |
 | **A08 Software & Data Integrity** | Idempotent schema installation; bootstrap identity files are re-read per turn so an operator edit takes effect on the next turn; the audit trails above. |
@@ -433,7 +436,7 @@ python -m pytest tests/test_security.py -v
 ```
 
 The suite needs a Postgres instance and the environment variables in
-`.env.example`. It covers:
+the config. It covers:
 
 - the redaction filter (message and arguments, model key and bearer token);
 - `sanity_check_env()` — world-readable file, placeholder value, empty

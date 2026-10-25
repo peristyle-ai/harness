@@ -12,7 +12,6 @@ This test:
   4. cleans up every row it created
 
 Usage:
-  set -a; . ./.env; set +a
   .venv/bin/python scripts/check_error_persist.py [agent]
 """
 from __future__ import annotations

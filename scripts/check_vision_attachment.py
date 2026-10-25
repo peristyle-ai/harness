@@ -12,7 +12,6 @@ events (iterations / tool calls) rather than dying instantly.
 Runs against the live harness as a throwaway user; cleans up after.
 
 Usage:
-  set -a; . ./.env; set +a
   .venv/bin/python scripts/check_vision_attachment.py
 """
 import json
