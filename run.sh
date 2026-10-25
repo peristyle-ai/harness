@@ -8,6 +8,31 @@ cd "$(dirname "$0")"
 
 [ -d .venv ] && source .venv/bin/activate
 
+# --- the bind address ----------------------------------------------------
+# It comes from the config (app.bind). The HARNESS_BIND environment
+# variable overrides it, for an operator who wants to move the port
+# without editing the config.
+#
+# This USED to be read from the .env. When the .env went away, the
+# fallback silently took over and the service bound 0.0.0.0:5010 on
+# every install -- including one whose config says 127.0.0.1:5010, i.e.
+# a loopback-only install that ended up listening on every interface.
+BIND="${HARNESS_BIND:-}"
+if [ -z "$BIND" ] && [ -f config.yaml ]; then
+    BIND="$(python3 -c "
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)
+try:
+    print(yaml.safe_load(open('config.yaml'))['app']['bind'])
+except Exception:
+    pass
+" 2>/dev/null || true)"
+fi
+[ -n "$BIND" ] || BIND="0.0.0.0:5010"
+
 # --- log to BOTH the journal and a readable file (2026-10-21) ---
 # gunicorn's --access/--error-logfile are "-" (stdout/stderr), which systemd
 # sends to the journal. That is unreadable by the operator's own automation,
@@ -30,7 +55,7 @@ exec > >(tee -a "$LOG_DIR/harness.log") 2>&1
 exec gunicorn \
     --workers 1 \
     --threads 4 \
-    --bind "${HARNESS_BIND:-0.0.0.0:5010}" \
+    --bind "$BIND" \
     --access-logfile - \
     --error-logfile - \
     --timeout "${GUNICORN_TIMEOUT:-1800}" \
