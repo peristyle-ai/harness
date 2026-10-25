@@ -159,6 +159,27 @@ def guard_agent(table, constraint, body):
             .replace("%L", "'" + body.replace("'", "''") + "'", 1))
 
 
+# The types and operator classes that belong to an EXTENSION. The dump
+# renders them qualified by the extension's real schema (public.halfvec,
+# public.gin_trgm_ops, ...), which is only correct on the machine the
+# dump came from. The generated file puts the extension's namespace on
+# the search_path instead, so these are emitted UNQUALIFIED.
+EXTENSION_OBJECTS = (
+    "halfvec", "vector", "hnsw",
+    "gin_trgm_ops", "gist_trgm_ops",
+    "halfvec_cosine_ops", "halfvec_l2_ops", "halfvec_ip_ops",
+    "vector_cosine_ops", "vector_l2_ops", "vector_ip_ops",
+    "citext",
+)
+
+
+def unqualify_extension_objects(stmt):
+    """Drop the schema qualifier from an extension-owned type/opclass."""
+    for name in EXTENSION_OBJECTS:
+        stmt = re.sub(r"\bpublic\.%s\b" % name, name, stmt)
+    return stmt
+
+
 def make_idempotent(stmt, agent=False):
     """Return an idempotent form of a statement, or None to drop it.
 
@@ -361,6 +382,28 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 CREATE EXTENSION IF NOT EXISTS "vector";
 CREATE EXTENSION IF NOT EXISTS "citext";
+
+-- The extensions do not always live in `public`. On a host where another
+-- project installed them first, their types and operator classes are in
+-- THAT project's schema -- pgvector's halfvec, pg_trgm's gin_trgm_ops.
+--
+-- The dump rendered them qualified by their real schema, so the file
+-- below says e.g. public.halfvec(1024). That is right on the machine the
+-- dump came from and WRONG everywhere else, so the schema is resolved at
+-- run time instead: the extension's own namespace is put on the
+-- search_path, and the references are unqualified.
+--
+-- (This is the same thing migrations/007_add_memories_table.sql did,
+-- and the reason it carried the comment about it.)
+SELECT format('SET search_path TO public, %s',
+              (SELECT string_agg(DISTINCT s.nspname, ', ')
+                 FROM (SELECT 'public' AS nspname
+                       UNION
+                       SELECT n2.nspname
+                         FROM pg_extension e2
+                         JOIN pg_namespace n2 ON n2.oid = e2.extnamespace
+                        WHERE e2.extname IN ('vector', 'pg_trgm', 'citext')) s))
+\gexec
 """
 
 
@@ -385,7 +428,7 @@ def build():
     for s in order(pub):
         st = make_idempotent(s)
         if st:
-            out.append(st + "\n")
+            out.append(unqualify_extension_objects(st) + "\n")
 
     out.append("""
 -- ============================================================================
@@ -409,6 +452,7 @@ CREATE SCHEMA IF NOT EXISTS :"agent_name";
         st = make_idempotent(s, agent=True)
         if st is None:
             continue
+        st = unqualify_extension_objects(st)
 
         # The INDEX NAMES that carry the agent name. psql's :"agent_name"
         # form quotes the WHOLE identifier, so it cannot be concatenated

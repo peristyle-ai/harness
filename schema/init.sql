@@ -42,6 +42,28 @@ CREATE EXTENSION IF NOT EXISTS "pg_trgm";
 CREATE EXTENSION IF NOT EXISTS "vector";
 CREATE EXTENSION IF NOT EXISTS "citext";
 
+-- The extensions do not always live in `public`. On a host where another
+-- project installed them first, their types and operator classes are in
+-- THAT project's schema -- pgvector's halfvec, pg_trgm's gin_trgm_ops.
+--
+-- The dump rendered them qualified by their real schema, so the file
+-- below says e.g. public.halfvec(1024). That is right on the machine the
+-- dump came from and WRONG everywhere else, so the schema is resolved at
+-- run time instead: the extension's own namespace is put on the
+-- search_path, and the references are unqualified.
+--
+-- (This is the same thing migrations/007_add_memories_table.sql did,
+-- and the reason it carried the comment about it.)
+SELECT format('SET search_path TO public, %s',
+              (SELECT string_agg(DISTINCT s.nspname, ', ')
+                 FROM (SELECT 'public' AS nspname
+                       UNION
+                       SELECT n2.nspname
+                         FROM pg_extension e2
+                         JOIN pg_namespace n2 ON n2.oid = e2.extnamespace
+                        WHERE e2.extname IN ('vector', 'pg_trgm', 'citext')) s))
+\gexec
+
 -- ============================================================================
 -- The shared public schema
 --
@@ -125,7 +147,7 @@ CREATE TABLE IF NOT EXISTS public.groups (
 
 CREATE TABLE IF NOT EXISTS public.users (
     id bigint NOT NULL,
-    email public.citext NOT NULL,
+    email citext NOT NULL,
     password_hash text NOT NULL,
     display_name text DEFAULT ''::text NOT NULL,
     role text DEFAULT 'member'::text NOT NULL,
@@ -363,7 +385,7 @@ CREATE TABLE IF NOT EXISTS :"agent_name".memories (
     id bigint NOT NULL,
     content text NOT NULL,
     content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, content)) STORED,
-    embedding public.halfvec(1024),
+    embedding halfvec(1024),
     source_type text DEFAULT 'system'::text NOT NULL,
     source_ref text,
     importance smallint DEFAULT 5 NOT NULL,
@@ -402,7 +424,7 @@ CREATE TABLE IF NOT EXISTS :"agent_name".memory_chunks (
     chunk_index integer DEFAULT 0 NOT NULL,
     content text NOT NULL,
     content_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, content)) STORED,
-    embedding public.halfvec(1024),
+    embedding halfvec(1024),
     source_type text DEFAULT 'chat'::text NOT NULL,
     source_ref text,
     importance smallint DEFAULT 5 NOT NULL,
@@ -526,9 +548,9 @@ CREATE INDEX IF NOT EXISTS memory_audit_op_idx ON :"agent_name".memory_audit USI
 
 CREATE INDEX IF NOT EXISTS memory_audit_ts_idx ON :"agent_name".memory_audit USING btree (ts DESC);
 
-CREATE INDEX IF NOT EXISTS memory_chunks_content_trgm_idx ON :"agent_name".memory_chunks USING gin (content public.gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS memory_chunks_content_trgm_idx ON :"agent_name".memory_chunks USING gin (content gin_trgm_ops);
 
-CREATE INDEX IF NOT EXISTS memory_chunks_emb_hnsw_idx ON :"agent_name".memory_chunks USING hnsw (embedding public.halfvec_cosine_ops) WITH (m='16', ef_construction='64');
+CREATE INDEX IF NOT EXISTS memory_chunks_emb_hnsw_idx ON :"agent_name".memory_chunks USING hnsw (embedding halfvec_cosine_ops) WITH (m='16', ef_construction='64');
 
 CREATE INDEX IF NOT EXISTS memory_chunks_permanent_idx ON :"agent_name".memory_chunks USING btree (permanent, pinned_at DESC) WHERE (permanent = true);
 
@@ -547,7 +569,7 @@ SELECT format(
     'CREATE INDEX IF NOT EXISTS %I ON %I.memories %s',
     :'agent_name' || '_memories_emb_hnsw_idx',
     :'agent_name',
-    'USING hnsw (embedding public.halfvec_cosine_ops) WITH (m=''16'', ef_construction=''64'')')
+    'USING hnsw (embedding halfvec_cosine_ops) WITH (m=''16'', ef_construction=''64'')')
 \gexec
 
 SELECT format(
