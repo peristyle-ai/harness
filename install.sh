@@ -262,7 +262,13 @@ else
     # extension, so only a superuser may create it -- which is why this
     # step is separate from the schema step below (the operator role
     # cannot do this). schema/extensions.sql is idempotent.
-    as_postgres -d "$DB_NAME" -f "$REPO/schema/extensions.sql" >/dev/null
+    #
+    # The SET silences the "already exists, skipping" notices on a
+    # re-run. psql processes -c and -f in the SAME session, so the SET
+    # applies to the file that follows it.
+    as_postgres -d "$DB_NAME" \
+        -c "SET client_min_messages TO warning" \
+        -f "$REPO/schema/extensions.sql" >/dev/null
     info "extensions     pgcrypto, pg_trgm, citext, vector (in $DB_NAME)"
 fi
 
