@@ -10,6 +10,10 @@ chat with the attachment, and checks that the turn actually produces
 events (iterations / tool calls) rather than dying instantly.
 
 Runs against the live harness as a throwaway user; cleans up after.
+
+Usage:
+  set -a; . ./.env; set +a
+  .venv/bin/python scripts/check_vision_attachment.py
 """
 import json
 import os
@@ -19,11 +23,16 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 BASE = "http://127.0.0.1:5010"
 EMAIL = f"harness-vision-{secrets.token_hex(3)}@example.com"
 PASSWORD = secrets.token_urlsafe(12)
-PY = "/opt/harness/harness/.venv/bin/python3"
+
+# The repo root (the parent of scripts/) and its virtualenv, so this
+# runs from any checkout -- not only from /opt/harness/harness.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+PY = str(REPO_ROOT / ".venv" / "bin" / "python3")
 
 
 def psql(sql, **vars):

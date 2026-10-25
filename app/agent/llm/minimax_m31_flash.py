@@ -40,8 +40,8 @@ stream the same value bounds the gap BETWEEN CHUNKS, so long generations now
 complete as long as the model keeps emitting.
 
 Rollback: set LLM_STREAMING=0 in .env and restart. No code change.
-Tests: tests_stream_parity.py (streaming vs buffered parity),
-tests_toolloop_stream.py (full tool-call round-trip).
+Tests: scripts/check_stream_parity.py (streaming vs buffered parity),
+scripts/check_toolloop_stream.py (full tool-call round-trip).
 
 Patterned after minimax_m3 (also Anthropic-compatible, same endpoint).
 Differences:

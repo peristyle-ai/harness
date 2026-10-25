@@ -12,17 +12,24 @@ Two conditional system-prompt warnings (Mal, 2026-10-22):
      skills / scripts / docs, or write it as an UNPINNED memory and
      recall it on demand.
 
-Run: set -a; . ./.env; set +a; .venv/bin/python tests_prompt_pressure.py
+Run: set -a; . ./.env; set +a; .venv/bin/python scripts/check_prompt_pressure.py
 """
 import os
 import sys
+from pathlib import Path
+
+# Anchor the import on the repo root (the parent of scripts/), so this
+# runs from any checkout -- not only from /opt/harness/harness.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import load_config
 from app.agent.loop import AgentLoop
 from app.agent.bootstrap import BootstrapLoader
 from app.agent.memory import MemoryChunk
+from app.extensions import _resolve_pie_root
 
 cfg = load_config()
+pie_root = _resolve_pie_root(cfg)
 THRESHOLD = cfg.prompt.pressure_threshold
 print(f"threshold from config: {THRESHOLD} (enabled={cfg.prompt.pressure_enabled})")
 
@@ -130,7 +137,7 @@ check("triggered at 0.5", "context_pressure" in out)
 print("\n8. real bootstrap usage for every agent")
 try:
     for agent in cfg.app.agents:
-        boot = BootstrapLoader(cfg, f"/opt/harness/harness/pie/{agent}/identity")
+        boot = BootstrapLoader(cfg, workspace_root=pie_root / agent / "identity")
         usage = boot.file_usage()
         worst = max(usage, key=lambda u: u["pct"])
         print(f"  {agent}: " + ", ".join(

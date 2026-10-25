@@ -6,7 +6,7 @@ without HTTP or auth. Anything the journal would have swallowed is printed.
 
 Usage:
   set -a; . ./.env; set +a
-  .venv/bin/python reproduce_turn.py "<prompt>" [agent]
+  .venv/bin/python scripts/reproduce_turn.py "<prompt>" [agent]
 """
 import logging
 import sys
