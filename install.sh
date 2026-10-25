@@ -57,6 +57,9 @@ OPERATOR_EMAIL="operator@example.com"
 OPERATOR_TIMEZONE="$(timedatectl show -p Timezone --value 2>/dev/null || echo UTC)"
 [ -n "$OPERATOR_TIMEZONE" ] || OPERATOR_TIMEZONE="UTC"
 DRY_RUN="no"
+# The embedding columns are halfvec; the halfvec type arrived in
+# pgvector 0.7.0.
+MIN_VECTOR_VERSION="0.7.0"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -270,6 +273,28 @@ else
         -c "SET client_min_messages TO warning" \
         -f "$REPO/schema/extensions.sql" >/dev/null
     info "extensions     pgcrypto, pg_trgm, citext, vector (in $DB_NAME)"
+
+    # pgvector must be new enough. The embedding columns are halfvec,
+    # and the halfvec type arrived in pgvector 0.7.0 -- 0.6.x has only
+    # the full-precision `vector`, and the schema then fails with a
+    # confusing "type halfvec does not exist" a few steps later.
+    VECTOR_VER="$(as_postgres -d "$DB_NAME" -tAc \
+        "select extversion from pg_extension where extname = 'vector'" | tr -d '[:space:]')"
+    if [ -z "$VECTOR_VER" ]; then
+        die "the vector extension is not installed in $DB_NAME"
+    fi
+    if [ "$(printf '%s\n%s\n' "$MIN_VECTOR_VERSION" "$VECTOR_VER" | sort -V | head -1)" \
+         != "$MIN_VECTOR_VERSION" ]; then
+        die "pgvector $VECTOR_VER is too old. The harness needs
+    $MIN_VECTOR_VERSION or newer: the embedding columns are halfvec, and
+    the halfvec type arrived in pgvector 0.7.0 (0.6.x only has the
+    full-precision vector type).
+
+    Install a newer pgvector package for this PostgreSQL, then:
+      sudo -u postgres psql -d $DB_NAME -c 'ALTER EXTENSION vector UPDATE'
+    and run this again."
+    fi
+    info "pgvector       $VECTOR_VER"
 fi
 
 # --- 5. the schema -------------------------------------------------------
