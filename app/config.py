@@ -128,7 +128,7 @@ class _AgentLimits:
     # replays on every model call). When the live context exceeds it, the
     # OLDEST iterations of the turn are dropped (a sliding window) and the
     # model is told in the system prompt that its tail was truncated.
-    # 2026-10-25: Evie's turn reached ~1.4M tokens against MiniMax's
+    # 2026-10-25: a turn reached ~1.4M tokens against MiniMax's
     # 1,000,000-token window and was rejected with
     # "context window exceeds limit (2013)".
     context_window_tokens: int
@@ -245,7 +245,7 @@ class _Llm:
     max_tokens: int
     timeout_s: int
     temperature: float
-    # z.ai-specific: thinking control (added 2026-10-19 for peribot).
+    # z.ai-specific: thinking control (added 2026-10-19 for a per-agent test).
     # None (default) = omit the field, use API default.
     # dict = pass through (e.g. {"type": "disabled"} or {"type": "enabled", "budget": N}).
     # Only the glm_5_3_flash adapter reads this; other adapters ignore it.
@@ -275,8 +275,8 @@ class AppConfig:
     # of the global `llm:` block. Missing agents fall through to `llm:`.
     # The dispatch happens in app.extensions.init_app() (adapter_registry)
     # and app.agent.loop.AgentLoop._adapter_for(agent_name).
-    # Added 2026-10-19 for the peribot z.ai test (peribot -> glm-5.3-flash,
-    # peribot + peribot stay on minimax_m3).
+    # Added 2026-10-19 for a z.ai model test (one agent -> glm-5.3-flash,
+    # the rest stay on minimax_m3).
     llm_per_agent: dict[str, _Llm] | None
     embedding: _Embedding
     memory: _Memory

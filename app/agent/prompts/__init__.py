@@ -3,12 +3,12 @@
 Each adapter can have its own variant (different tool descriptions,
 different style instructions, different XML-vs-Markdown preferences). If
 a specific adapter has no prompt, we fall back to the minimax_m3 prompt
-('peribot') as the canonical default — most modern models will read it
+('agent') as the canonical default — most modern models will read it
 without complaint.
 """
 from . import minimax_m3
 
-# Adapters without a specific prompt get the canonical peribot prompt.
+# Adapters without a specific prompt get the canonical agent prompt.
 DEFAULT_PROMPT = minimax_m3.SYSTEM_PROMPT
 
 _PROMPTS: dict[str, str] = {

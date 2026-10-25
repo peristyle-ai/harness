@@ -3,11 +3,11 @@ second user turn.
 
 Why this exists
 ---------------
-On 2026-10-21 20:57 Mal sent Evie "ok ive made the actual payment to
+On 2026-10-21 20:57 an operator sent an agent "ok ive made the actual payment to
 sample employee, please register that in the accounts system...". The turn was
 accepted and ran for ~14 minutes (39 iterations, ~55 tool calls), then
 the harness service was restarted underneath it and the turn was lost:
-the user row survived in `peribot.turns`, the assistant row never existed.
+the user row survived in the turns table, the assistant row never existed.
 
 Re-sending the message from the browser would write a SECOND user row.
 That row would show up twice in the conversation and twice in the

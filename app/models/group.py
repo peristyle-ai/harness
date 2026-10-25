@@ -5,8 +5,8 @@ the landing page; the group has
 
   * members  — humans picked from public.users (the canonical user table
     of the peristyle DB), and
-  * agents   — members of the harness's installed agent roster (peribot,
-    peribot, peribot, ...) who can be @mentioned in the group's chat.
+  * agents   — members of the harness's installed agent roster (one per
+    agent schema) who can be @mentioned in the group's chat.
 
 The canonical transcript is public.group_messages: one row per message
 with an explicit author (human / agent / system). Every agent that

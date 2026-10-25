@@ -1,7 +1,7 @@
 """Regression test: a chat message WITH an image attachment must not die
 with "Working outside of application context".
 
-That was Evie's 2026-10-22 15:33 failure: the NDJSON streaming path runs
+That was an agent's 2026-10-22 15:33 failure: the NDND streaming path runs
 the loop in a daemon thread with no Flask app context, and the vision
 path read current_app.config["HARNESS_UPLOAD_DIR"].
 
@@ -24,6 +24,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+AGENT = os.environ.get("HARNESS_AGENT", "peribot")
 BASE = "http://127.0.0.1:5010"
 EMAIL = f"harness-vision-{secrets.token_hex(3)}@example.com"
 PASSWORD = secrets.token_urlsafe(12)
@@ -132,7 +133,7 @@ def main():
         def chat():
             try:
                 req = urllib.request.Request(
-                    f"{BASE}/api/v1/entities/peribot/chat",
+                    f"{BASE}/api/v1/entities/{AGENT}/chat",
                     data=json.dumps({"message":
                         "Describe what you can see in this image, in one "
                         "sentence.", "attachments": [att]}).encode(),
@@ -160,7 +161,7 @@ def main():
         t0 = time.time()
         while th.is_alive() and time.time() - t0 < 180:
             time.sleep(3)
-            st, b, _ = http(f"/api/v1/entities/peribot/turns/active",
+            st, b, _ = http(f"/api/v1/entities/{AGENT}/turns/active",
                             cookie=cookie)
             if st == 200:
                 d = json.loads(b)
@@ -193,10 +194,10 @@ def main():
     finally:
         # The value is passed as a psql variable, not interpolated into
         # the SQL text.
-        psql("DELETE FROM peribot.turns WHERE conversation_id IN "
-             "(SELECT id FROM peribot.conversations WHERE user_id=:'uid');",
+        psql(f"DELETE FROM {AGENT}.turns WHERE conversation_id IN "
+             f"(SELECT id FROM {AGENT}.conversations WHERE user_id=:'uid');",
              uid=uid)
-        psql("DELETE FROM peribot.conversations WHERE user_id=:'uid';",
+        psql(f"DELETE FROM {AGENT}.conversations WHERE user_id=:'uid';",
              uid=uid)
         psql("DELETE FROM public.users WHERE id=:'uid';", uid=uid)
         print(f"cleaned up user {uid}")

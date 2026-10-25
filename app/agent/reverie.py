@@ -108,7 +108,7 @@ def _fmt_bytes(n: int) -> str:
 
 # The reverie mode block. It goes in the SYSTEM prompt, not in the user
 # message: a user-role instruction was READ and IGNORED by the agent
-# (peribot picked up an unfinished Google Docs task from the conversation
+# (an agent picked up an unfinished Google Docs task from the conversation
 # history instead of doing the cleanup). The scope rule has to outrank
 # the pull of that history, so it lives where the agent's role is
 # defined.

@@ -1,7 +1,7 @@
 """attach_file tool — copy a server-side file into the harness uploads
 dir and return a URL the chat UI can render as a file-attachment icon.
 
-Why: the peristyle agent (peribot) routinely generates files the user
+Why: the agent routinely generates files the user
 wants to download — logs, CSV exports, generated code, debug bundles.
 The LLM has a `exec_bash` tool, but that just dumps file contents
 into the chat text. We want a *downloadable* file the user can click

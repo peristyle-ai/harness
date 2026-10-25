@@ -5,7 +5,7 @@ Phase 10: image uploads via /api/v1/uploads (multipart) and serve
           via GET /api/v1/uploads/<id>.<ext>. Files land in
           HARNESS_UPLOAD_DIR with a UUID-prefixed name; the
           original filename is kept only in the JSONB
-          `peribot.turns.attachments` metadata.
+          `<agent>.turns.attachments` metadata.
 """
 from __future__ import annotations
 
@@ -519,7 +519,7 @@ def internal_reverie():
                     # the harness caches them in the BootstrapLoader at
                     # startup -- without a reload the agent would keep
                     # being served the OLD files until the next restart
-                    # (peribot's reverie spotted this itself and proposed
+                    # (the agent's reverie spotted this itself and proposed
                     # it as a fix). Re-read them now.
                     try:
                         loader = ext["bootstrap_registry"].get(agent_name)
@@ -631,7 +631,7 @@ def set_agent():
     """List available agents (GET) or set the active agent for this session (POST).
 
     GET response:
-        {"agents": ["peribot", "peribot"], "active": "peribot", "default": "peribot"}
+        {"agents": ["peribot"], "active": "peribot", "default": "peribot"}
     POST body: {"agent": "peribot"}  -> sets session["active_agent_name"]
     POST response: {"active": "peribot"} on success, 400 on unknown agent.
     """
@@ -1413,7 +1413,7 @@ MAX_ICON_BYTES = 2 * 1024 * 1024  # 2 MiB
 
 
 def _safe_name(name: str) -> str:
-    # Entity names are typically simple identifiers (peribot, peribot, peribot).
+    # Entity names are typically simple identifiers (peribot, ...).
     # Keep them as-is for now; if the registry ever allows weirder names
     # we can hash here. Reject anything that smells like a path traversal.
     if ".." in name or "/" in name or "\\" in name or not name:
@@ -1430,7 +1430,7 @@ def entity_turn_active(name: str):
     If the browser refreshes (or the connection drops) the bubble is
     gone even though the turn keeps running server-side, and there was
     nothing to re-attach to -- the chat looked empty for 40+ minutes
-    while Evie was still working.
+    while the agent was still working.
 
     This endpoint exposes the in-flight turn's buffered NDJSON events so
     the UI can rebuild the bubble (iteration count, tool calls, partial
@@ -1456,7 +1456,7 @@ def entity_turn_error(name: str):
     2026-10-22: when the NDJSON stream died without a final event the
     browser rendered a ⚠️ bubble, but that bubble lived only in the DOM
     -- the next refresh made the failure look like silence again, which
-    is how Mal lost an hour to "why didn't Evie answer?". This endpoint
+    is how an operator lost an hour to "why didn't the agent answer?". This endpoint
     writes the failure into the turns table so it survives a refresh and
     shows up in the conversation history.
 

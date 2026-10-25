@@ -37,6 +37,9 @@ import sys
 PUBLIC_DUMP = os.environ.get("PUBLIC_DUMP", "/tmp/public_dump.sql")
 AGENT_DUMP = os.environ.get("AGENT_DUMP", "/tmp/agent_dump.sql")
 OUT = os.environ.get("OUT", "/tmp/harness_audit/schema/init.sql")
+# The schema the dump was taken from. The generator rewrites it to the
+# agent's name, so it only matters when re-generating from a dump.
+_SRC = re.escape(os.environ.get("HARNESS_SOURCE_SCHEMA", "peribot"))
 
 # The live public schema belongs to SEVERAL projects (the harness, the
 # website's contact form, the starter-pack orders). These are the harness's.
@@ -184,7 +187,7 @@ def make_idempotent(stmt, agent=False):
     """Return an idempotent form of a statement, or None to drop it.
 
     When `agent` is set, the statement is still in its SOURCE form (it
-    refers to the literal `peribot` schema), so the table reference can be
+    refers to the literal source schema), so the table reference can be
     read. The result is emitted in the templated form.
     """
     kind = statement_kind(stmt)
@@ -252,9 +255,9 @@ def make_idempotent(stmt, agent=False):
                 # from the session setting, because psql will not
                 # interpolate a variable inside a dollar-quoted string
                 agent_table = table.split(".")[-1]
-                m2 = re.search(r"REFERENCES (?:peribot\.)?(\w+)", body)
+                m2 = re.search(rf"REFERENCES (?:{_SRC}\.)?(\w+)", body)
                 if m2:
-                    body = re.sub(r"REFERENCES (?:peribot\.)?\w+",
+                    body = re.sub(rf"REFERENCES (?:{_SRC}\.)?\w+",
                                   "REFERENCES %I." + m2.group(1), body)
                 # The body becomes the format() TEMPLATE of the EXECUTE,
                 # so its %I placeholders take the agent's schema name. The
@@ -272,8 +275,8 @@ def make_idempotent(stmt, agent=False):
         # quoted string, where psql will not substitute a variable. It is
         # built at run time from the session setting.
         m = re.match(
-            r"^ALTER TABLE ONLY peribot\.(\w+) ALTER COLUMN (\w+) "
-            r"SET DEFAULT nextval\('peribot\.(\w+_id_seq)'::regclass\);$",
+            rf"^ALTER TABLE ONLY {_SRC}\.(\w+) ALTER COLUMN (\w+) "
+            r"SET DEFAULT nextval\('{_SRC}\.(\w+_id_seq)'::regclass\);$",
             stmt)
         if m:
             table, column, seq = m.groups()
@@ -448,7 +451,7 @@ CREATE SCHEMA IF NOT EXISTS :"agent_name";
     for s in order(agent):
         # make the statement idempotent FIRST, on the source form -- the
         # guard blocks and the run-time name builders have to read the
-        # literal `peribot` schema to know what they are guarding.
+        # literal source schema to know what they are guarding.
         st = make_idempotent(s, agent=True)
         if st is None:
             continue
@@ -462,13 +465,13 @@ CREATE SCHEMA IF NOT EXISTS :"agent_name";
         # on the SOURCE form, before the templating.
         m = re.match(
             r"^CREATE (UNIQUE )?INDEX (?:IF NOT EXISTS )?(peribot_\w+) "
-            r"ON peribot\.(\w+) (.*);$",
+            rf"ON {_SRC}\.(\w+) (.*);$",
             st)
         if m:
             unique, index_name, table, rest = m.groups()
             # the live index names are "<agent>_memories_created_at_idx" --
             # the agent name, an underscore, then the suffix
-            suffix = index_name[len("peribot"):]
+            suffix = index_name[len(_SRC):]
             # The index body may contain a single quote -- WITH (m='16')
             # -- which would TERMINATE the format string. So the body is
             # passed as a %s ARGUMENT (not %L, which would quote it) and
@@ -486,7 +489,7 @@ CREATE SCHEMA IF NOT EXISTS :"agent_name";
 
         # now template the statements that psql can interpolate
         st = re.sub(r"\bperibot\.", ':"agent_name".', st)
-        st = st.replace("DEFAULT 'peribot'::text", "DEFAULT :'agent_name'::text")
+        st = st.replace(f"DEFAULT '{_SRC}'::text", "DEFAULT :'agent_name'::text")
         # the sequence names
         st = re.sub(r"\bperibot\.(\w+_id_seq)\b", ':"agent_name".\1', st)
         out.append(st + "\n")

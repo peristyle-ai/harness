@@ -1,15 +1,16 @@
 """The extension schemas must be on the connection's search_path.
 
-Regression test for the a customer host re-create (2026-10-25).
+Regression test for an install where the extension lives in a private
+schema (2026-10-25).
 
 The harness's SQL refers to pgvector's types UNQUALIFIED -- `%s::halfvec`
 -- because the schema the "vector" extension lives in is not known until
 the database is opened. On the machine the harness was written on,
 pgvector is in `public`, so the default search_path happened to work.
 
-On a customer host the mail server installed pgvector FIRST, so it lives in
-`polymed_mail`, and the default search_path does not contain it. Every
-memory write then failed with:
+On one host another project installed pgvector FIRST, so it lives in
+that project's schema, and the default search_path does not contain it.
+Every memory write then failed with:
 
     RuntimeError: UndefinedObject: type "halfvec" does not exist
 

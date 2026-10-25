@@ -1,4 +1,4 @@
-"""Shared safety + audit-log helpers for peribot's tools (memory + sql_query + exec_bash).
+"""Shared safety + audit-log helpers for the agent's tools (memory + sql_query + exec_bash).
 
 After Mal 2026-10-15 simplification (drop read_file, list_directory,
 http_get because they were redundant with exec_bash), the path_safe
@@ -220,7 +220,7 @@ import re as _re
 # LLM is told in the system prompt that these are absolute.
 _HARD_BLOCK_PATTERNS: list[tuple[_re.Pattern[str], str]] = [
     # Privilege escalation. The whole point of "without sudo" is
-    # that peribot can't escalate. Any sudo/su is a hard block.
+    # that the agent can't escalate. Any sudo/su is a hard block.
     (_re.compile(r"\bsudo\b"), "sudo not allowed (no privilege escalation)"),
     (_re.compile(r"^\s*su(\s|$)"), "su not allowed (no privilege escalation)"),
     (_re.compile(r"\bsu\s+-\s*"), "su - not allowed (no privilege escalation)"),
@@ -246,7 +246,7 @@ _HARD_BLOCK_PATTERNS: list[tuple[_re.Pattern[str], str]] = [
 ]
 
 
-# Soft-flag: peribot must ask the user before running. Returns
+# Soft-flag: the agent must ask the user before running. Returns
 # requires_confirmation=true. The LLM is told in the system prompt
 # to re-call with confirm=true ONLY after the user has said
 # "yes" in chat.

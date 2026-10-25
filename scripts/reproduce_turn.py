@@ -1,4 +1,4 @@
-"""Reproduce Evie's failing turn in-process, with full tracebacks on stdout.
+"""Reproduce a failing turn in-process, with full tracebacks on stdout.
 
 Mirrors create_app()'s wiring (pool -> embedding -> MemoryAPI -> AgentLoop)
 so the real tool loop, real tools and real streaming adapter are exercised
@@ -31,7 +31,7 @@ from app.agent.bootstrap import BootstrapLoader
 
 config = load_config()
 prompt = sys.argv[1]
-agent = sys.argv[2] if len(sys.argv) > 2 else "peribot"
+agent = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("HARNESS_AGENT", "peribot")
 
 pool = ConnectionPool(config.db.url, min_size=1, max_size=4,
                       kwargs={"autocommit": False}, open=True)
@@ -56,7 +56,7 @@ mem = MemoryAPI(pool=pool, embedding_client=embedding,
 loop = AgentLoop(
     adapter=adapter,
     memory=mem,
-    bootstrap=bootstrap_registry.get(agent) or bootstrap_registry.get("peribot"),
+    bootstrap=bootstrap_registry.get(agent) or next(iter(bootstrap_registry.values()), None),
     config=config,
     bootstrap_registry=bootstrap_registry,
     memory_registry={agent: mem},

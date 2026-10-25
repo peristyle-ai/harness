@@ -3,7 +3,7 @@
 2026-10-22. Starts a turn in a background thread, then sends SIGTERM to
 this process. The handler in app/agent/turn_guard.py should write an
 "interrupted" assistant turn for the in-flight turn BEFORE the process
-exits -- which is what was missing when Mal's Evie turn was destroyed by
+exits -- which is what was missing when an operator's turn was destroyed by
 a service restart on 2026-10-21 21:12.
 
 Uses a throwaway user id so it does not touch anyone's conversation.
