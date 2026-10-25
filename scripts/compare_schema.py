@@ -17,12 +17,27 @@ AGENTS = ("peribot", "peribot", "peribot")
 
 
 def q(db, sql):
+    """Run a query as postgres and return its output.
+
+    A FAILED query returns a distinct marker, and the comparison below
+    treats that marker as a failure. Without that, a permission problem
+    (sudo asking for a password, say) makes both sides return the same
+    error text and the comparison reports "IDENTICAL" while comparing
+    NOTHING -- a vacuous pass. It happened here: the script was run as
+    the `peristyle` user, whose sudo to postgres needs a password, and it
+    reported 1 item per category and called it a match.
+    """
     r = subprocess.run(
         ["sudo", "-n", "-u", "postgres", "psql", "-d", db, "-tAc", sql],
         capture_output=True, text=True)
     if r.returncode != 0:
         return "ERR: " + r.stderr.strip()[:300]
     return r.stdout.strip()
+
+
+def is_error(out):
+    """True when a query FAILED rather than returning rows."""
+    return out.startswith("ERR:")
 
 
 # The live public schema belongs to SEVERAL projects (the harness, the
@@ -93,7 +108,18 @@ for schema in ("public",) + AGENTS:
                 out.append(line.strip())
             return sorted(x for x in out if x)
 
+        if is_error(live) or is_error(test):
+            fails += 1
+            print(f"  {label:12} QUERY FAILED -- cannot compare")
+            print(f"      live: {live[:200]}")
+            print(f"      test: {test[:200]}")
+            continue
+
         a, b = norm(live, schema), norm(test, schema)
+        if not a and not b:
+            fails += 1
+            print(f"  {label:12} BOTH SIDES EMPTY -- nothing was compared")
+            continue
         if a == b:
             print(f"  {label:12} IDENTICAL ({len(a)} item(s))")
         else:
