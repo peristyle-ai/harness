@@ -5,7 +5,7 @@
 -- nothing more.
 --
 -- WHY IT IS A SEPARATE FILE
---   The runtime role's NAME is per-install (harness_app, peribot_app, ...),
+--   The runtime role's NAME is per-install (harness_app, agent_app, ...),
 --   so the grants cannot be baked into the schema: they are a psql
 --   variable, exactly like the agent's schema name.
 --

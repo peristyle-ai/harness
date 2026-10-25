@@ -326,8 +326,9 @@ chat UI sets them.
   `HARNESS_SECRET_KEY`, `LLM_API_KEY` or `DATABASE_URL` is empty, or if
   `LLM_API_KEY` still holds a `***…` placeholder. That check is
   `security.sanity_check_env()` and it runs at startup.
-- The tracked `config.yaml` contains only `${VAR}` references. The
-  per-install `install/<name>.yaml` files carry real keys and are
+- The tracked `config.yaml.example` contains only `${VAR}` references.
+  The install's own `config.yaml` is not tracked.
+- The per-install `install/<name>.yaml` files carry real keys and are
   git-ignored.
 - The redaction filter masks `Authorization: Bearer <token>` and
   `LLM_API_KEY=…` in every log record, in the message and in the

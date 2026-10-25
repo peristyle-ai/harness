@@ -38,7 +38,7 @@ meaningful run.
   memory tools; if it belongs in the code, change the code. Do not create a
   second convention.
 - **Never commit a secret.** `.env` and `config.yaml` are git-ignored;
-  `config.yaml` is committed and contains only `${VAR}` references.
+  `config.yaml.example` is committed and contains only `${VAR}` references.
 - **A schema change is a migration.** Add a numbered file; do not edit an
   existing one that has shipped.
 

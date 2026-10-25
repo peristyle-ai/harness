@@ -17,7 +17,7 @@ machine. This writes, from that one file:
 It never invents a secret: anything the operator has to choose is left as a
 visible placeholder and reported at the end.
 
-    python3 tools/apply_install_config.py install/peribot.yaml
+    python3 tools/apply_install_config.py install/agent.yaml
 """
 from __future__ import annotations
 
@@ -96,12 +96,13 @@ def _gen_password() -> str:
 def render_config(inst: dict) -> str:
     """config.yaml for this install.
 
-    The stock config.yaml is ${VAR}-based, so most of it works as-is. Two
-    things differ: the agent list (one agent, not three) and the per-agent
-    LLM overrides (they name wisp/evie/clawbie and their env vars, which
-    this install does not have — the global llm block applies instead).
+    The stock template (config.yaml.example) is ${VAR}-based, so most of
+    it works as-is. Two things differ: the agent list (one agent, not the
+    stock one) and the per-agent LLM overrides (the stock template keeps
+    those commented out, and this install does not need them -- the global
+    llm block applies instead).
     """
-    src = (ROOT / "config.yaml").read_text()
+    src = (ROOT / "config.yaml.example").read_text()
     agent = inst["agent_name"]
 
     # The agent list.
@@ -111,9 +112,11 @@ def render_config(inst: dict) -> str:
         src, count=1, flags=re.M,
     )
 
-    # Drop the per-agent LLM block: it is a wholesale replacement of the
-    # global block for those agents, and this install has one agent that
-    # uses the global block.
+    # Drop the per-agent LLM block if it is live in the template: it is a
+    # wholesale replacement of the global block for those agents, and this
+    # install has one agent that uses the global block. In the stock
+    # template the block is commented out, so this is a no-op -- but a
+    # template that has it live must still work.
     src = re.sub(
         r"\n  per_agent:\n(?:.*\n)*?(?=[a-z_]+:)",
         "\n",
@@ -283,11 +286,11 @@ def render_agent_schema(inst: dict) -> str:
         die(f"no schema init to template from: {src_path}")
     text = src_path.read_text()
 
-    # the quoted-identifier form -- :"agent_name" -> "peribot"
+    # the quoted-identifier form -- :"agent_name" -> "agent"
     text = text.replace(':"agent_name"', f'"{agent}"')
-    # the string-literal form -- :'agent_name' -> 'peribot'
+    # the string-literal form -- :'agent_name' -> 'agent'
     text = text.replace(":'agent_name'", f"'{agent}'")
-    # the \gexec index builders -- :'agent_name' || '_suffix' -> 'peribot' || '_suffix'
+    # the \gexec index builders -- :'agent_name' || '_suffix' -> 'agent' || '_suffix'
     text = text.replace(":'agent_name' ||", f"'{agent}' ||")
 
     # the check must ignore the COMMENTS (they document the variable) and
@@ -347,8 +350,10 @@ def print_next_steps(inst: dict, generated: dict[str, str]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("install_config", help="e.g. install/peribot.yaml")
+    ap.add_argument("install_config", help="e.g. install/agent.yaml")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="overwrite an existing config.yaml / .env")
     args = ap.parse_args()
 
     inst = load_install(Path(args.install_config))
@@ -373,6 +378,16 @@ def main() -> int:
         for path in writes:
             print(f"  would write {path.relative_to(ROOT)}")
         return 0
+
+    # config.yaml is the INSTALL's own config: it is not tracked in git,
+    # so it is the only copy of this install's settings. Overwriting it
+    # silently would destroy an existing install's configuration.
+    if not args.force:
+        clash = [p for p in (ROOT / "config.yaml", ROOT / ".env") if p.exists()]
+        if clash:
+            die("refusing to overwrite " + ", ".join(str(p.relative_to(ROOT)) for p in clash)
+                + " -- this install already has one. Pass --force if you "
+                  "really mean to replace it.")
 
     for path, text in writes.items():
         path.parent.mkdir(parents=True, exist_ok=True)

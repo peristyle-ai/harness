@@ -5,15 +5,15 @@ app:
     cert: ${HARNESS_TLS_CERT}
     key: ${HARNESS_TLS_KEY}
   default_agent: ${HARNESS_DEFAULT_AGENT}
-  # Database name where agent schemas live (wisp, evie, clawbie).
-  # Historically the harness had its own "harness" DB; now it lives
-  # inside the peristyle DB to avoid one-DB-per-user sprawl.
-  # Override per-install with HARNESS_INSTALLATION_DATABASE.
+  # The database that HOLDS the agent schemas. Override per-install with
+  # HARNESS_INSTALLATION_DATABASE.
   installation_database: ${HARNESS_INSTALLATION_DATABASE}
+  # The agents this install serves. Each one is a schema in that database
+  # plus a directory under pie_root. One agent is the usual case; add
+  # another by adding its name here and creating its schema (see
+  # schema/README.md).
   agents:
-  - wisp
-  - evie
-  - clawbie
+  - peribot
   pie_root: ${HARNESS_PIE_ROOT}
   secret_key: ${HARNESS_SECRET_KEY}
 db:
@@ -35,66 +35,28 @@ llm:
   max_tokens: ${LLM_MAX_TOKENS}
   timeout_s: ${LLM_TIMEOUT_S}
   temperature: ${LLM_TEMPERATURE}
-  # Per-agent LLM overrides (added 2026-10-19 for the clawbie z.ai test).
-  # Each entry is a complete LLM config block; the harness uses it for
-  # that specific agent's adapter instead of the global block above.
-  # Missing agents fall through to the global block.
-  # Env vars resolve via ${VAR}; per-agent keys live in the .creds/ dir
-  # (or wherever the agent-specific env file points).
-  per_agent:
-    wisp:
-      # Pinned explicitly 2026-10-21 (per Mal). Previously wisp had NO
-      # per_agent entry and fell through to the global llm: block, which has
-      # no `thinking` key -- so once it moved to minimax_m31_flash it silently
-      # inherited the adapter default of `max` effort while evie and clawbie
-      # ran at medium. This block pins it to medium to match.
-      #
-      # NOTE: per_agent entries REPLACE the global block wholesale (see
-      # app/extensions.py: `replace(config, llm=override_llm_cfg)`), they do
-      # not merge field-by-field. Every field must be supplied here.
-      adapter: ${WISP_LLM_ADAPTER}
-      api_key: ${WISP_LLM_API_KEY}
-      base_url: ${WISP_LLM_BASE_URL}
-      model: ${WISP_LLM_MODEL}
-      max_tokens: ${WISP_LLM_MAX_TOKENS}
-      timeout_s: ${WISP_LLM_TIMEOUT_S}
-      temperature: ${WISP_LLM_TEMPERATURE}
-      # Same wire shape as evie/clawbie: passed through as output_config.
-      # Cannot be disabled on this model -- would return 400.
-      thinking: ${WISP_LLM_THINKING}
-    clawbie:
-      adapter: ${CLAWBIE_LLM_ADAPTER}
-      api_key: ${CLAWBIE_LLM_API_KEY}
-      base_url: ${CLAWBIE_LLM_BASE_URL}
-      model: ${CLAWBIE_LLM_MODEL}
-      max_tokens: ${CLAWBIE_LLM_MAX_TOKENS}
-      timeout_s: ${CLAWBIE_LLM_TIMEOUT_S}
-      temperature: ${CLAWBIE_LLM_TEMPERATURE}
-      # Moved off z.ai onto MiniMax M3.1-Flash 2026-10-21 per Mal: all three
-      # intelligences now share one provider and one API key.
-      # thinking: same minimax_m31_flash wire format as evie below. It CANNOT
-      # be disabled -- {"type": "disabled"} returns 400 ("model requires
-      # adaptive thinking"). Omit to use the API default, which is max.
-      thinking: ${CLAWBIE_LLM_THINKING}
-    evie:
-      # M3.1-Flash switch (added 2026-10-20 per Mal). Same MiniMax
-      # endpoint as the global llm: block — just routed through the
-      # newer model with tunable thinking depth. See
-      # app/agent/llm/minimax_m31_flash.py for the wire format.
-      adapter: ${EVIE_LLM_ADAPTER}
-      api_key: ${EVIE_LLM_API_KEY}
-      base_url: ${EVIE_LLM_BASE_URL}
-      model: ${EVIE_LLM_MODEL}
-      max_tokens: ${EVIE_LLM_MAX_TOKENS}
-      timeout_s: ${EVIE_LLM_TIMEOUT_S}
-      temperature: ${EVIE_LLM_TEMPERATURE}
-      # M3.1-Flash thinking control (minimax_m31_flash only). The dict
-      # is passed through as 'output_config' on the wire; MiniMax accepts
-      # effort in {low, medium, high, xhigh, max}. Cannot be disabled;
-      # sending {"type": "disabled"} or effort=none returns 400
-      # ("model requires adaptive thinking").
-      # Default if omitted: max. Start with medium (per Mal).
-      thinking: ${EVIE_LLM_THINKING}
+  # Per-agent LLM overrides.
+  #
+  # Each entry is a COMPLETE llm block for one agent: the harness uses it
+  # instead of the global block above, replacing it wholesale rather than
+  # merging field by field -- so every field must be supplied. An agent
+  # with no entry falls through to the global block.
+  #
+  # A single-agent install needs none of this, which is why it is
+  # commented out below. Uncomment it (and add the matching <AGENT>_LLM_*
+  # variables to .env) when one agent needs a different model or a
+  # different API key from the rest.
+  #
+  # per_agent:
+  #   peribot:
+  #     adapter: ${PERIBOT_LLM_ADAPTER}
+  #     api_key: ${PERIBOT_LLM_API_KEY}
+  #     base_url: ${PERIBOT_LLM_BASE_URL}
+  #     model: ${PERIBOT_LLM_MODEL}
+  #     max_tokens: ${PERIBOT_LLM_MAX_TOKENS}
+  #     timeout_s: ${PERIBOT_LLM_TIMEOUT_S}
+  #     temperature: ${PERIBOT_LLM_TEMPERATURE}
+  #     thinking: ${PERIBOT_LLM_THINKING}
 embedding:
   # WHERE the embeddings come from. Two shapes, chosen by the base_url:
   #
