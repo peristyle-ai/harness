@@ -25,11 +25,24 @@
 # which cannot approve its own pull request, so it waits for Grove.
 set -euo pipefail
 
-# The repository root. `git rev-parse` first, so the script also works
-# when it is run from a copy kept inside the checkout (an agent's
-# scripts/ directory), not only from the repository's own scripts/.
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORKTREE_ROOT="${AGENT_WORKTREE_ROOT:-$(dirname "$REPO_ROOT")/harness-worktrees}"
+# The HARNESS checkout -- not whichever repository this script happens to
+# sit in. An agent's own workspace is a SEPARATE git repository
+# (pie/<agent>/.git), so `git rev-parse --show-toplevel` from an agent's
+# scripts/ directory finds THAT, and the worktree would be created in the
+# wrong place. So walk up looking for the harness checkout's markers.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT=""
+d="$SCRIPT_DIR"
+while [ "$d" != "/" ]; do
+  if [ -f "$d/pyproject.toml" ] && [ -d "$d/schema" ]; then REPO_ROOT="$d"; break; fi
+  d="$(dirname "$d")"
+done
+if [ -z "$REPO_ROOT" ]; then
+  REPO_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || cd "$SCRIPT_DIR/.." && pwd)"
+fi
+# The worktrees live in the install user's own home: the agent's
+# workspace is a separate repository with its own tree to keep clear.
+WORKTREE_ROOT="${AGENT_WORKTREE_ROOT:-$HOME/harness-worktrees}"
 SLUG="${2:-}"
 REMOTE="${AGENT_REMOTE:-origin}"
 BASE="${AGENT_BASE:-main}"
