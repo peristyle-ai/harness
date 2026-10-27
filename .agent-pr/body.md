@@ -1,12 +1,7 @@
-The shipped template's llm block still carried the old MiniMax-M3 defaults while the production install runs minimax_m31_flash / MiniMax-M3.1-Flash. A fresh install therefore started on a different adapter, model, output budget and timeout from the one that is actually in daily use.
+The tool LLM-facing description said the shell command runs as the peristyle user. That string ships to every install, but each install runs as its own Unix account: this one runs as mal_external, the production one as peristyle. On this install the description was simply false, and an agent that believed it drew a wrong conclusion about the machine - it concluded the production account did not exist and that a sibling install was a leftover directory.
 
-This changes the template's global llm block to the production values:
+The fix derives the account name at runtime from the process real uid (pwd.getpwuid(os.getuid())) and interpolates it into the description, so every install tells the model the truth about who it is running as. The module docstring and the inline comment are corrected the same way.
 
-  adapter:    minimax_m3   -> minimax_m31_flash
-  model:      MiniMax-M3   -> MiniMax-M3.1-Flash
-  max_tokens: 2048         -> 524288
-  timeout_s:  60           -> 180
+What did NOT change: the tool safety classifier. The hard-block list (privilege escalation, destructive filesystem commands, remote-code pipes, the protected system files, setuid bits) and the soft-flag list are untouched - this PR changes the DESCRIPTION only. The new test file pins all sixteen hard-blocked commands so a future edit cannot quietly loosen them.
 
-temperature (0.7) and streaming (1) already matched and are unchanged. The commented per-agent example further down the same file already carried these values, so the global block now agrees with it.
-
-One file, one concern: config.yaml.example. No secret is touched -- api_key stays the YOUR_LLM_API_KEY_HERE placeholder, and the placeholder check in tests/test_security.py still passes.
+Tests: tests/test_exec_bash_description.py - 20 tests. The three that describe the new behaviour were watched failing on the old code first; the rest pin the hard blocks and the allow path. Full suite: 201 passed, 9 skipped. Secret scan clean.
