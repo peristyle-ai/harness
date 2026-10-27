@@ -1,1 +1,1 @@
-fix(agent): the end-of-turn diagnostic says WHY a turn ended
+chore(config): the shipped llm defaults match the production install

@@ -1,37 +1,12 @@
-The loop printed the same message for every turn that ended without a
-final answer: 'I wasn't able to finish reasoning within the allowed N
-tool iterations'. Two very different situations produce it, and the
-message interpolates max_iters, so it always reads like a cap hit:
+The shipped template's llm block still carried the old MiniMax-M3 defaults while the production install runs minimax_m31_flash / MiniMax-M3.1-Flash. A fresh install therefore started on a different adapter, model, output budget and timeout from the one that is actually in daily use.
 
-  CASE A - a genuine cap hit: the loop ran out of iterations while it
-           was still making tool calls. The message is right, but it
-           never said how many iterations the turn actually used.
+This changes the template's global llm block to the production values:
 
-  CASE B - the model ended the turn with no text and no tool call. The
-           minimax_m31_flash adapter drops thinking blocks from
-           response.text, so a reasoning-only response arrives with
-           text=None and the loop claimed a cap hit that never
-           happened. On 2026-10-27 at 17:26 a pull-request turn whose
-           work was DONE reported 'hit the 25-iteration cap' with 477
-           iterations still unused, and the operator went looking for
-           the wrong bug.
+  adapter:    minimax_m3   -> minimax_m31_flash
+  model:      MiniMax-M3   -> MiniMax-M3.1-Flash
+  max_tokens: 2048         -> 524288
+  timeout_s:  60           -> 180
 
-This change:
+temperature (0.7) and streaming (1) already matched and are unchanged. The commented per-agent example further down the same file already carried these values, so the global block now agrees with it.
 
-  * tracks WHY the turn ended (iteration cap / wall-clock cap / final
-    answer / no answer) and switches the diagnostic on it;
-  * counts the model calls the turn actually made, so the diagnostic
-    states the iterations used, not only the cap;
-  * does not discard the model's last output when the response carried
-    thinking but no text and no tool_use: the reasoning is used as the
-    answer (bounded to 4000 chars), or the turn says plainly that the
-    model ended the turn without an answer;
-  * follows the new wording in app/routes/web.py, which watches for the
-    model fabricating the harness's own failure message (it still
-    matches the old wording too -- the model can produce that one from
-    its own context).
-
-tests/test_loop_end_of_turn.py drives the real agent loop over a fake
-adapter: no database, no model, and no tool is ever executed. The six
-new behavioural assertions were seen FAILING on the old code before
-this change and pass on it now. Full suite: 181 passed, 9 skipped.
+One file, one concern: config.yaml.example. No secret is touched -- api_key stays the YOUR_LLM_API_KEY_HERE placeholder, and the placeholder check in tests/test_security.py still passes.
