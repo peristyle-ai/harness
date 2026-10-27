@@ -137,7 +137,11 @@ memory:
     pin_audit: true
 
 agent:
-  max_tool_iterations: 25
+  # Tool iterations allowed in ONE turn. Matches the production
+  # install's value: the shipped default of 25 truncated legitimate
+  # long turns -- an agent hit the cap and was told to break the
+  # request into smaller steps.
+  max_tool_iterations: 500
   max_searches_per_turn: 15
   max_pins_per_turn: 10
   max_unpins_per_turn: 10
