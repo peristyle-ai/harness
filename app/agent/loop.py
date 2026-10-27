@@ -162,6 +162,22 @@ _NUDGE_MESSAGES = {
         "very next response, or the turn ends in failure."
     ),
 }
+# --- why the turn ended (2026-10-27) ---------------------------------------
+# A turn can end for several very different reasons, and the diagnostic
+# the user sees MUST say which one happened. Until 2026-10-27 every
+# end-of-turn path that produced no final text printed the SAME message
+# -- "I wasn't able to finish reasoning within the allowed N tool
+# iterations" -- so a turn that ended because the model returned a
+# reasoning-only response (no text, no tool call) was reported as an
+# iteration-cap hit, even when the cap had barely been touched. That
+# misdiagnosis sent the operator hunting for the wrong bug: a pull
+# request turn whose work was DONE reported "hit the 25-iteration cap"
+# with 477 iterations still unused.
+_END_ITERATION_CAP = "iteration_cap"    # the loop ran out of iterations
+_END_WALL_CLOCK_CAP = "wall_clock_cap"  # the turn hit the wall-clock cap
+_END_FINAL_ANSWER = "final_answer"      # the model produced an answer
+_END_NO_ANSWER = "no_answer"            # the model ended with no answer
+
 from .llm import BaseLLM
 from .llm.base import Message
 from .tools import ToolContext, all_tools as all_registered_tools, get as get_tool
@@ -472,6 +488,85 @@ class AgentLoop:
         return ""
 
     @staticmethod
+    def _thinking_text(response: Any, limit: int = 4000) -> str:
+        """The model's thinking blocks as plain text, bounded.
+
+        The adapters that speak the Anthropic extended-thinking spec
+        (minimax_m31_flash) put the model's reasoning in
+        `response.thinking_blocks` and leave `response.text` empty when
+        there is nothing else. The loop does not show thinking to the
+        user as a matter of course, but it MUST NOT throw it away when
+        it is the only thing the model produced (2026-10-27).
+        """
+        parts: list[str] = []
+        for block in (getattr(response, "thinking_blocks", None) or []):
+            if isinstance(block, dict):
+                t = block.get("thinking")
+            else:
+                t = getattr(block, "thinking", None)
+            if not t:
+                continue
+            parts.append(str(t).strip())
+        text = "\n\n".join(p for p in parts if p)
+        if len(text) > limit:
+            text = text[:limit].rstrip() + "\n[... truncated]"
+        return text
+
+    @classmethod
+    def _no_answer_text(
+        cls, response: Any, *, iterations_used: int, max_iters: int
+    ) -> str:
+        """The turn ended with no answer: the model returned neither
+        text nor a tool call.
+
+        This is the case that used to be misreported as an iteration-cap
+        hit (2026-10-27): the minimax adapter drops thinking blocks from
+        `.text`, so a response that carried only reasoning arrived with
+        `text=None` and the loop's one-and-only diagnostic claimed the
+        cap had been reached -- with hundreds of iterations unused.
+
+        The message says what actually happened, how many iterations the
+        turn used, and -- when the model produced any -- its last
+        output, so the work is not thrown away.
+        """
+        used = f"{iterations_used} of the {max_iters} allowed tool iterations"
+        thinking = cls._thinking_text(response) if response is not None else ""
+        if thinking:
+            return (
+                "The model ended this turn without an answer: it returned "
+                "no text and no tool call, so this was NOT an "
+                f"iteration-cap problem ({used}). Its last output, which "
+                "the adapter keeps out of the visible text, is below.\n\n"
+                f"{thinking}"
+            )
+        return (
+            "The model ended this turn without an answer: it returned no "
+            "text and no tool call, so this was NOT an iteration-cap "
+            f"problem ({used}). Ask me to continue and I will pick the "
+            "thread up where it stopped."
+        )
+
+    @classmethod
+    def _iteration_cap_text(
+        cls, *, iterations_used: int, max_iters: int
+    ) -> str:
+        """The iteration cap was reached while the model was still making
+        tool calls (CASE A).
+
+        The wording names the cap and states how many iterations the turn
+        actually used, so the diagnostic cannot be mistaken for the
+        no-answer case.
+        """
+        return (
+            f"I hit the tool-iteration cap: this turn used {iterations_used} "
+            f"of the {max_iters} allowed tool iterations and the model was "
+            "still making tool calls when it ran out. This usually means "
+            "the model was being inefficient (too much reconnaissance) "
+            "rather than that the task was too complex. Could you rephrase, "
+            "simplify, or break the request into smaller steps?"
+        )
+
+    @staticmethod
     def _append_steering_message(messages: list, content: Any) -> bool:
         """Put a mid-turn user message into the live message list.
 
@@ -731,6 +826,12 @@ class AgentLoop:
         max_pins = self.config.agent.max_pins_per_turn
         max_unpins = self.config.agent.max_unpins_per_turn
         tool_iters = 0
+        # The number of model calls this turn has made. `tool_iters` is
+        # the INDEX of the current iteration (it is incremented at the
+        # END of an iteration), so it is one behind the number of calls
+        # made while the turn is running. The end-of-turn diagnostic
+        # needs the real count, so keep it (2026-10-27).
+        llm_calls = 0
         # Phase 16.5: set True once the assistant turn is persisted on the
         # clean path. The finally block below reads it to decide whether to
         # write a partial turn. It was referenced but NEVER assigned, so
@@ -738,6 +839,11 @@ class AgentLoop:
         # the turn persisted, then the request 500'd. Fixed 2026-10-21.
         assistant_turn_persisted = False
         final_text: str | None = None
+        # Why the turn ended. Set once, read after the loop, so the
+        # diagnostic can tell the operator WHICH end this was (2026-10-27).
+        # The default is the iteration cap: that is what the while
+        # condition below does when it stops the loop.
+        end_reason = _END_ITERATION_CAP
         retrieved_ids: list[int] = []
         # Phase 15 (2026-10-18): collect attach_file tool results so
         # the assistant turn + final event can carry the attachment
@@ -789,6 +895,7 @@ class AgentLoop:
                         f"commits -- ask me to continue and I will pick it up "
                         f"in a fresh turn."
                     )
+                    end_reason = _END_WALL_CLOCK_CAP
                     turn_state.set_progress(final_text=final_text)
                     break
                 # Capture the raw prompt before each LLM call so the admin
@@ -844,6 +951,7 @@ class AgentLoop:
                             response = _payload
                 if response is None:
                     raise RuntimeError("LLM stream ended without a response")
+                llm_calls += 1
                 log.info(
                     "agent_loop iter=%d model=%s finish=%s tools=%d",
                     tool_iters, self.adapter.name, response.finish_reason,
@@ -1039,6 +1147,28 @@ class AgentLoop:
                     # already nudged _MAX_NUDGES times. Take the text as
                     # the final answer.
                     final_text = response.text
+                    if final_text:
+                        end_reason = _END_FINAL_ANSWER
+                    else:
+                        # CASE B (2026-10-27): the model ended the turn
+                        # with no text and no tool call. The minimax
+                        # adapter drops thinking blocks from .text, so a
+                        # reasoning-only response arrives here with
+                        # text=None -- and the old code then reported an
+                        # iteration-cap hit that never happened. Do NOT
+                        # discard the model's last output: use it, or say
+                        # plainly that the turn ended without an answer.
+                        end_reason = _END_NO_ANSWER
+                        final_text = self._no_answer_text(
+                            response, iterations_used=llm_calls,
+                            max_iters=max_iters,
+                        )
+                        log.warning(
+                            "agent_loop: the model ended the turn with no "
+                            "answer (no text, no tool call) after %d/%d "
+                            "iterations",
+                            llm_calls, max_iters,
+                        )
                     emission_iters.append(iter_record)
                     turn_state.set_progress(final_text=final_text)
                     break
@@ -1247,22 +1377,32 @@ class AgentLoop:
                 tool_iters += 1
 
             if final_text is None:
-                # Reached the configured max_tool_iterations without the
-                # model producing final text. Make this diagnostic so the
-                # user can tell whether the limit was too low for the task
-                # or the model was being inefficient (e.g. lots of recon
-                # before/after the actual work). 2026-10-17: hit at 25 iters
-                # on a 4-step payroll task where the model made 21+ recon
-                # calls before completing. Bumped default to 40.
-                final_text = (
-                    f"I wasn't able to finish reasoning within the allowed "
-                    f"{max_iters} tool iterations. "
-                    f"This usually means the model was being inefficient "
-                    f"(too much reconnaissance) rather than that the task "
-                    f"was too complex. Could you rephrase, simplify, or "
-                    f"break the request into smaller steps?"
-                )
+                # The loop ended without an answer. CASE A: the while
+                # condition stopped the loop, i.e. the iteration cap was
+                # reached while the model was still making tool calls.
+                # The other way a turn can end with no answer -- the
+                # model returning a reasoning-only response -- is handled
+                # inside the loop above (_END_NO_ANSWER), so it never
+                # reaches here and never claims a cap hit that did not
+                # happen.
+                # 2026-10-17: hit at 25 iters on a 4-step payroll task
+                # where the model made 21+ recon calls before completing.
+                if end_reason == _END_ITERATION_CAP:
+                    final_text = self._iteration_cap_text(
+                        iterations_used=llm_calls, max_iters=max_iters,
+                    )
+                else:
+                    # Defensive: every other end reason sets final_text
+                    # before it breaks. If one ever stops doing that,
+                    # say what happened rather than blame the cap.
+                    final_text = self._no_answer_text(
+                        None, iterations_used=llm_calls, max_iters=max_iters,
+                    )
                 turn_state.set_progress(final_text=final_text)
+            log.info(
+                "agent_loop: turn ended (reason=%s, iters=%d/%d)",
+                end_reason, llm_calls, max_iters,
+            )
 
             latency_ms = int((time.monotonic() - t0) * 1000)
             # Flush the captured thought stream to the last_emission
