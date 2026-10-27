@@ -62,12 +62,17 @@ db:
 llm:
   # The adapter module and the model it talks to. `minimax_m3` and
   # `minimax_m31_flash` both speak MiniMax's Anthropic-compatible API.
-  adapter: minimax_m3
+  #
+  # These are the values the PRODUCTION install runs, so a fresh install
+  # starts where production already runs: the adapter and model in daily
+  # use, the full 524288-token output budget, and the 180s request
+  # timeout. The per-agent example further down already carried them.
+  adapter: minimax_m31_flash
   api_key: YOUR_LLM_API_KEY_HERE
   base_url: https://api.minimax.io/anthropic
-  model: MiniMax-M3
-  max_tokens: 2048
-  timeout_s: 60
+  model: MiniMax-M3.1-Flash
+  max_tokens: 524288
+  timeout_s: 180
   temperature: 0.7
   # SSE streaming. 1 = stream (the chat UI shows the answer as it is
   # written); 0 = wait for the whole answer. The LLM_STREAMING
