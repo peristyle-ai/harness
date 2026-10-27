@@ -198,17 +198,30 @@ def admin_last_prompt_view():
 
 
 # Phase 16 (2026-10-20): the canned failure message the loop emits
-# when max_tool_iterations is actually hit (loop.py ~line 701). Used to
-# detect the "model fabricated this text to give up early" failure mode:
-# when the model's final_text matches this template but the loop's
-# tool_iterations is well below the configured cap, the message is the
-# model's own output, not the harness's iteration-cap message. (See the
-# turn 279 on 2026-10-20: model wrote "40 tool iterations" while the
-# configured cap was 500 and the loop only ran 2 iterations.)
-_CANNED_FAILURE_RE = re.compile(
-    r"I wasn't able to finish reasoning within the allowed "
-    r"(?P<stated>\d+) tool iterations",
-    re.IGNORECASE,
+# when max_tool_iterations is actually hit (loop.py, _iteration_cap_text).
+# Used to detect the "model fabricated this text to give up early"
+# failure mode: when the model's final_text matches this template but
+# the loop's tool_iterations is well below the configured cap, the
+# message is the model's own output, not the harness's iteration-cap
+# message. (See the turn 279 on 2026-10-20: model wrote "40 tool
+# iterations" while the configured cap was 500 and the loop only ran 2
+# iterations.)
+#
+# 2026-10-27: the loop's cap wording changed (it now names the cap and
+# states the iterations used), so the detector follows it -- and keeps
+# matching the OLD wording, because the model can still fabricate that
+# one: it is in the model's context from earlier turns.
+_CANNED_FAILURE_RES = (
+    re.compile(
+        r"I hit the tool-iteration cap: this turn used "
+        r"(?P<stated>\d+) of the \d+ allowed tool iterations",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"I wasn't able to finish reasoning within the allowed "
+        r"(?P<stated>\d+) tool iterations",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -222,14 +235,16 @@ def _detect_fabrication(final_text, max_iters, tool_iterations):
     if tool_iterations >= max_iters:
         # The loop genuinely hit the cap; the text came from the harness.
         return None
-    m = _CANNED_FAILURE_RE.search(final_text)
-    if not m:
-        return None
-    try:
-        stated = int(m.group("stated"))
-    except (TypeError, ValueError):
-        return None
-    return stated, max_iters, tool_iterations
+    for rx in _CANNED_FAILURE_RES:
+        m = rx.search(final_text)
+        if not m:
+            continue
+        try:
+            stated = int(m.group("stated"))
+        except (TypeError, ValueError):
+            return None
+        return stated, max_iters, tool_iterations
+    return None
 
 
 def _render_last_emission_page(state: dict) -> str:
