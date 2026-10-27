@@ -1,1 +1,1 @@
-chore(config): the shipped llm defaults match the production install
+chore(safety): the env-var blocklist comment must not name one install's Unix account
