@@ -1,1 +1,1 @@
-chore(config): the shipped llm defaults match the production install
+fix(tools): the shipped text must not name one install's Unix account
