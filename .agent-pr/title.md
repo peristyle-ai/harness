@@ -1,1 +1,1 @@
-exec_bash: name the install's Unix user at runtime instead of one hard-coded account
+fix(tools): the shipped text must not name one install's Unix account

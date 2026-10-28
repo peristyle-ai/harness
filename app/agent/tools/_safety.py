@@ -325,7 +325,7 @@ def classify_command(command: str) -> tuple[str, str | None]:
     return "allow", None
 
 
-# Env-var blocklist for exec_bash. The peristyle runtime inherits
+# Env-var blocklist for exec_bash. The harness service inherits
 # a bunch of env vars (LLM_API_KEY, DATABASE_URL, JWT_SECRET, etc.)
 # and the model could `printenv` them. We pass a stripped env to
 # the subprocess so the only vars the model sees are the safe ones.

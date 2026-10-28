@@ -1,7 +1,28 @@
-The tool LLM-facing description said the shell command runs as the peristyle user. That string ships to every install, but each install runs as its own Unix account: this one runs as mal_external, the production one as peristyle. On this install the description was simply false, and an agent that believed it drew a wrong conclusion about the machine - it concluded the production account did not exist and that a sibling install was a leftover directory.
+Both edits are one concern: the agent-facing text that ships to every
+install must not hard-code one install's Unix account.
 
-The fix derives the account name at runtime from the process real uid (pwd.getpwuid(os.getuid())) and interpolates it into the description, so every install tells the model the truth about who it is running as. The module docstring and the inline comment are corrected the same way.
+1. app/agent/tools/exec_bash.py - the tool description said "as the
+   peristyle user". That string ships to every install, so on any other
+   install it told the model a lie about the account it runs as. It is
+   what led an agent to conclude that no peristyle account existed on a
+   box that has one. The description now derives the name at runtime from
+   the process's real uid, so it names the account this install actually
+   runs as. The module docstring and the cwd comment were reworded the
+   same way.
 
-What did NOT change: the tool safety classifier. The hard-block list (privilege escalation, destructive filesystem commands, remote-code pipes, the protected system files, setuid bits) and the soft-flag list are untouched - this PR changes the DESCRIPTION only. The new test file pins all sixteen hard-blocked commands so a future edit cannot quietly loosen them.
+2. app/agent/tools/_safety.py - the env-var blocklist comment said "the
+   peristyle runtime inherits a bunch of env vars". Same mistake, same
+   fix: it now says "the harness service".
 
-Tests: tests/test_exec_bash_description.py - 20 tests. The three that describe the new behaviour were watched failing on the old code first; the rest pin the hard blocks and the allow path. Full suite: 201 passed, 9 skipped. Secret scan clean.
+WHAT DOES NOT CHANGE: the safety classifier. The hard-block list in
+app/agent/tools/_safety.py (privilege escalation, destructive filesystem
+commands, remote-code pipes, the protected system files, setuid bits) and
+the confirm list are untouched. Sixteen new tests pin them, so a future
+edit cannot quietly loosen them.
+
+TESTS: tests/test_exec_bash_description.py (3 new behaviours, 17 pins)
+and tests/test_safety_comment.py (2). Every new behaviour test was seen
+failing on the old code before the fix was applied.
+
+This supersedes #12 and #13: one concern, one pull request, one release
+(0.1.6 -> 0.1.7).
