@@ -195,7 +195,15 @@ class LLM(BaseLLM):
             log.warning("minimax_m31_flash: streaming path failed (%s: %s); "
                         "falling back to buffered POST",
                         type(e).__name__, e)
-            return self._complete_buffered(url, headers, body, tools)
+            # The fallback must NOT ask for a stream. `body` still carries
+            # stream=True from _build_body, and the endpoint HONOURS it: the
+            # "buffered" retry came back as text/event-stream, so r.json()
+            # raised "JSONDecodeError: Expecting value: line 1 column 1
+            # (char 0)" and the turn died instead of degrading. Strip the
+            # flag for the fallback only -- the SSE path above still wants
+            # it (2026-10-29, peristyle install).
+            buffered_body = {k: v for k, v in body.items() if k != "stream"}
+            return self._complete_buffered(url, headers, buffered_body, tools)
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         return self._parse_anthropic_message(data, tools, latency_ms)

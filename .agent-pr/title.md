@@ -1,1 +1,1 @@
-fix(tools): the shipped text must not name one install's Unix account
+fix(llm): the buffered fallback must not ask for a stream

@@ -1,28 +1,26 @@
-Both edits are one concern: the agent-facing text that ships to every
-install must not hard-code one install's Unix account.
+The SSE -> buffered fallback in the M3.1-Flash adapter re-used the
+streaming request body, which still carried `stream: True` from
+`_build_body`. The endpoint honours that flag, so the "buffered" retry
+came back as `text/event-stream` and `r.json()` raised
 
-1. app/agent/tools/exec_bash.py - the tool description said "as the
-   peristyle user". That string ships to every install, so on any other
-   install it told the model a lie about the account it runs as. It is
-   what led an agent to conclude that no peristyle account existed on a
-   box that has one. The description now derives the name at runtime from
-   the process's real uid, so it names the account this install actually
-   runs as. The module docstring and the cwd comment were reworded the
-   same way.
+    JSONDecodeError: Expecting value: line 1 column 1 (char 0)
 
-2. app/agent/tools/_safety.py - the env-var blocklist comment said "the
-   peristyle runtime inherits a bunch of env vars". Same mistake, same
-   fix: it now says "the harness service".
+That is fatal, not a degradation: the turn ends instead of falling back.
 
-WHAT DOES NOT CHANGE: the safety classifier. The hard-block list in
-app/agent/tools/_safety.py (privilege escalation, destructive filesystem
-commands, remote-code pipes, the protected system files, setuid bits) and
-the confirm list are untouched. Sixteen new tests pin them, so a future
-edit cannot quietly loosen them.
+Found on the peristyle install (2026-10-29), where it ended the
+2026-10-28 wisp reverie and the 17:06 heartbeat the same day. The
+nightly reverie that surfaced it spent 80 iterations chasing the same
+error before its own iteration cap stopped it.
 
-TESTS: tests/test_exec_bash_description.py (3 new behaviours, 17 pins)
-and tests/test_safety_comment.py (2). Every new behaviour test was seen
-failing on the old code before the fix was applied.
+The fix strips the `stream` key from the fallback request only. The SSE
+path still asks for a stream, and the buffered path (`streaming: false`)
+was never affected.
 
-This supersedes #12 and #13: one concern, one pull request, one release
-(0.1.6 -> 0.1.7).
+The new test is offline: a fake client that mimics the endpoint, where
+a body with `stream: true` comes back as SSE and does not parse as JSON.
+It was seen failing on the old code -- the fallback died with
+JSONDecodeError -- and it passes now. The other three tests pin the
+paths that already worked.
+
+One concern: the adapter only. The safety classifier, the tool
+descriptions and the loop diagnostic are untouched.
