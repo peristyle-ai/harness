@@ -1,12 +1,12 @@
-"""exec_bash tool — execute a shell command as the peristyle user.
+"""exec_bash tool — execute a shell command as the install's own Unix user.
 
 Per Mal 2026-10-14: this is the first write-capable tool. Three
 hard rules:
   1. NO sudo, NO su, NO privilege escalation. The command runs
-     in the peristyle process context with the peristyle user's
-     natural permissions. The peristyle user has no sudoers entry
-     for root commands; the tool runs subprocess.run() in the
-     current process which is already the peristyle process.
+     in this process's own context, with this install's Unix user's
+     natural permissions. That user has no sudoers entry for root
+     commands; the tool runs subprocess.run() in the current process,
+     which is already the install's own process.
   2. The command line is passed through `classify_command()` which
      has a hard-block list (sudo, rm -rf /, mkfs, /etc/passwd,
      curl|sh, etc.) and a soft-flag list (see the patterns in
@@ -42,11 +42,32 @@ import threading
 import time
 from pathlib import Path
 
+try:  # pwd is Unix-only; the harness only runs on Unix.
+    import pwd
+except ImportError:  # pragma: no cover - non-Unix host
+    pwd = None
+
 from app.paths import HOME_DIR, LOG_DIR
 
 # The working directory and the audit log are the install's, not
 # constants (app/paths.py resolves them from the environment).
 DEFAULT_CWD = str(HOME_DIR)
+
+
+def install_user() -> str:
+    """The Unix user this install's agent actually runs as.
+
+    Derived at runtime from the process's real uid.  This module ships
+    to every install and each install runs as its own Unix user, so a
+    name baked into the source is a lie everywhere except the install
+    it was written on -- and the model believes the description.
+    """
+    try:
+        if pwd is not None:
+            return pwd.getpwuid(os.getuid()).pw_name
+    except (KeyError, OSError):
+        pass
+    return os.environ.get("USER") or f"uid {os.getuid()}"
 
 from . import registry
 from ._safety import (
@@ -120,7 +141,7 @@ def _writes_to(command: str, name: str) -> bool:
 TOOL = {
     "name": "exec_bash",
     "description": (
-        "Execute a shell command as the peristyle user (no sudo, no "
+        f"Execute a shell command as the {install_user()} user (no sudo, no "
         "privilege escalation). The command is parsed by a "
         "command-safety classifier: certain operations (sudo, rm -rf /, "
         "mkfs, /etc/passwd, curl|sh, fork bombs) are hard-blocked and "
@@ -266,8 +287,9 @@ async def run(args: dict, ctx) -> dict:
     cwd_path = Path(cwd_arg)
     if not cwd_path.is_absolute():
         cwd_path = (Path(DEFAULT_CWD) / cwd_path).resolve()
-    # cwd must be at or under the operator's home/ (we run as peristyle, no
-    # reason to escape the home tree). Accept cwd==the operator's home
+    # cwd must be at or under the operator's home/ (we run as the
+    # install's own user, no reason to escape the home tree). Accept
+    # cwd==the operator's home
     # itself, not just paths under it. The previous `relative_to()`
     # check rejected the home dir itself (it's not a child of itself).
     # The simple `startswith("the operator's home/")` is *also* broken:
