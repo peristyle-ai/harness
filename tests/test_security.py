@@ -119,10 +119,25 @@ def test_the_example_config_ships_with_operator_mode_off():
 
 def test_the_installer_drops_no_new_privileges_in_operator_mode():
     """NoNewPrivileges=true stops sudo from running AT ALL, so an
-    operator-mode install must not carry it."""
+    operator-mode install must not carry it.
+
+    PrivateTmp=true must go too, and it is the subtler of the two: in a
+    USER unit systemd creates a user namespace for the /tmp bind-mount,
+    and inside a user namespace the setuid bit is inert -- so sudo cannot
+    elevate and every root-owned file looks like it belongs to "nobody".
+    The agent then sees a box where sudo is mysteriously broken.
+    """
     install = (Path(__file__).resolve().parents[1] / "install.sh").read_text()
     assert "NoNewPrivileges=true" in install  # it must strip it
+    assert "PrivateTmp=true" in install  # and this
     assert "allow_sudo" in install
+
+
+def test_the_shipped_unit_is_the_safe_posture():
+    """The shipped unit keeps both flags -- operator mode is opt-in."""
+    unit = (Path(__file__).resolve().parents[1] / "systemd" / "harness.service").read_text()
+    assert "NoNewPrivileges=true" in unit
+    assert "PrivateTmp=true" in unit
 
 
 # --- KeyRedactionFilter -------------------------------------------------

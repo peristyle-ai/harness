@@ -223,19 +223,33 @@ every one of them.
 | every other hard block | blocked | blocked — unchanged |
 | soft-flag (needs confirmation) | unchanged | unchanged |
 | the unit's `NoNewPrivileges=true` | present | **removed** (install.sh does it) |
+| the unit's `PrivateTmp=true` | present | **removed** (install.sh does it) |
 | the system prompt | the default text | the default text **+ an OPERATOR MODE clause** |
 
-The `NoNewPrivileges` detail is not cosmetic. Under that flag `sudo`
-refuses to run *at all*:
+**Two flags have to go, and the second one is not obvious.**
+
+`NoNewPrivileges=true` is the obvious one — under it sudo refuses to run *at
+all*:
 
 ```
 sudo: The "no new privileges" flag is set, which prevents sudo from running as root.
 ```
 
-So an operator-mode install whose unit still carries the flag has an agent
-whose `sudo` calls all fail — which reads as "sudo is broken" rather than
-"the flag is in the way". `install.sh` drops the flag when
-`security.allow_sudo` is true.
+That is not a password problem; no sudoers grant will satisfy it.
+
+`PrivateTmp=true` is the subtle one. In a **user** unit, systemd has to
+create a **user namespace** to do the `/tmp` bind-mount. Inside that
+namespace:
+
+- **the setuid bit is inert**, so sudo runs unprivileged and refuses with
+  `sudo: sudo must be owned by uid 0 and have the setuid bit set`; and
+- **every root-owned file appears to be owned by `nobody`** — `/usr/bin/sudo`
+  included, which makes the machine look like it has a broken sudo.
+
+The symptom is a box where sudo is mysteriously broken for the agent but
+works fine in an interactive shell. The cause is the unit, not the binary.
+
+Both flags are therefore dropped from the unit for an operator-mode install.
 
 ### What it does NOT change
 
