@@ -31,6 +31,21 @@ from typing import Any
 from uuid import UUID
 
 from . import prompts as agent_prompts
+
+def _operator_mode_enabled(config) -> bool:
+    """Is this install in operator mode?
+
+    Operator mode (2026-10-29) lets the agent use `sudo` through
+    exec_bash, bounded by the operator's sudoers grants. It is set by
+    `security.allow_sudo` in config.yaml and is OFF by default.
+
+    Read defensively: the tests build a minimal stand-in config object
+    that has no `security` attribute at all, and an install's config
+    predating the option must behave exactly as it did before.
+    """
+    sec = getattr(config, "security", None)
+    return bool(getattr(sec, "allow_sudo", False))
+
 from . import turn_guard
 from .context_window import ContextWindow
 
@@ -819,6 +834,9 @@ class AgentLoop:
             user_id=user_id,
             memory=agent_memory,
             protected_paths=tuple(protected_paths or ()),
+            # Operator mode (2026-10-29): the install may allow the agent
+            # to use sudo, bounded by the operator's sudoers grants.
+            allow_sudo=_operator_mode_enabled(self.config),
         )
         tools = all_registered_tools()
         max_iters = int(max_tool_iterations or 0) or self.config.agent.max_tool_iterations
@@ -1825,7 +1843,10 @@ class AgentLoop:
         # is self-contained. The dispatch is O(1) — a dict get with a
         # default — so the cost is negligible.
         agent_adapter = self._adapter_for(agent_name)
-        system_text = agent_prompts.get(agent_adapter.adapter_id).format(
+        system_text = agent_prompts.get(
+            agent_adapter.adapter_id,
+            allow_sudo=_operator_mode_enabled(self.config),
+        ).format(
             agent_name=agent_name, agent_tone="concise, direct, friendly",
         )
         # Refactor 2026-10-17: last 50 turns always included in the prompt

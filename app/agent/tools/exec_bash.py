@@ -141,9 +141,13 @@ def _writes_to(command: str, name: str) -> bool:
 TOOL = {
     "name": "exec_bash",
     "description": (
-        f"Execute a shell command as the {install_user()} user (no sudo, no "
-        "privilege escalation). The command is parsed by a "
-        "command-safety classifier: certain operations (sudo, rm -rf /, "
+        f"Execute a shell command as the {install_user()} user. Privilege "
+        "escalation (sudo/su) is hard-blocked UNLESS this install enables "
+        "operator mode (security.allow_sudo), in which case sudo is "
+        "permitted and bounded by the operator's sudoers grants — see the "
+        "OPERATOR MODE section of the system prompt if present. The command "
+        "is parsed by a "
+        "command-safety classifier: certain operations (rm -rf /, "
         "mkfs, /etc/passwd, curl|sh, fork bombs) are hard-blocked and "
         "return an error. Other operations (recursive chmod, "
         "stop/restart of the harness service, modifications to "
@@ -252,7 +256,9 @@ async def run(args: dict, ctx) -> dict:
                         "command": command}
 
     # 1. Classify the command
-    classification, reason = classify_command(command)
+    classification, reason = classify_command(
+        command, allow_sudo=bool(getattr(ctx, "allow_sudo", False))
+    )
     if classification == "block":
         exec_audit_log(
             command=command, cwd=cwd_arg,
