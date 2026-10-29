@@ -244,6 +244,15 @@ security:
     default: 100/minute
     chat: 30/minute
     memory: 60/minute
+  # Operator mode. Leave false for an install the agent should NOT be able
+  # to escalate from.
+  #
+  # When true, the agent may use `sudo` through exec_bash. It can only
+  # escalate as far as the OPERATOR's sudoers grants allow (in practice
+  # NOPASSWD grants for specific commands). The install's systemd unit
+  # must also drop NoNewPrivileges=true — under that flag sudo refuses to
+  # run at all — and install.sh does that for you.
+  allow_sudo: false
   # The shared secret for the service-to-service routes
   # (/api/v1/internal/*), checked against the X-Harness-Token header.
   # Generate one: python3 -c "import secrets; print(secrets.token_hex(32))"

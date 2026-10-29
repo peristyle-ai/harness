@@ -11,6 +11,7 @@ please say so.
 - [Reporting a vulnerability](#reporting-a-vulnerability)
 - [Threat model](#threat-model)
 - [The tool roster](#the-tool-roster)
+- [Operator mode](#operator-mode)
 - [Authentication and sessions](#authentication-and-sessions)
 - [Authorisation and data isolation](#authorisation-and-data-isolation)
 - [Input handling](#input-handling)
@@ -112,7 +113,8 @@ There is no LTS branch. Fixes land on `main`.
 
 - **Escalate to root.** `exec_bash` runs in the harness process's own
   user context, and `sudo` / `su` are hard-blocked by the command
-  classifier.
+  classifier — **unless this install enables operator mode** (see
+  [Operator mode](#operator-mode)).
 - **Write to the database through the agent.** All SQL is parametric
   (`%s` placeholders) and the read-only `sql_query` tool refuses anything
   that is not a `SELECT`.
@@ -184,6 +186,8 @@ Three controls, in order:
      `wget|sh`, anything touching `/etc/passwd`, `/etc/shadow`,
      `/etc/sudoers` or `/etc/systemd/system/`, `chmod` with setuid/setgid
      bits, `chmod 777`, and `systemctl mask|disable` of a *system* unit.
+     In operator mode the `sudo` / `su` entries are lifted; every other
+     entry stands (see [Operator mode](#operator-mode)).
    - *Soft flag* — refused **unless the operator confirms**: recursive
      `chmod`, `rm -rf` inside an uploads directory, and stopping,
      restarting or disabling the harness's own services (which would kill
@@ -194,6 +198,73 @@ Three controls, in order:
    exit code, the byte counts and the outcome land in
    `exec_audit.jsonl`. Output is capped at 50 KB per stream and the
    timeout is 30 s by default, 120 s at most.
+
+---
+
+## Operator mode
+
+**Default: off.** `security.allow_sudo: false` in `config.yaml` is the
+shipped posture, and it is the right posture for an install whose agent
+reads anything an outsider can influence.
+
+**Operator mode** is an explicit, per-install decision to let the agent
+use `sudo` through `exec_bash`. It exists because some agents are not
+"assistants" but **operators**: the sysadmin of an install, driving
+installs, databases and services on a machine it is responsible for. An
+agent that cannot run `sudo` cannot finish those jobs — it has to ask a
+human for every privileged step, and the human has to be present for
+every one of them.
+
+### What it changes
+
+| | default | operator mode |
+|---|---|---|
+| `sudo` / `su` in `exec_bash` | hard-blocked | **allowed**, bounded by the operator's sudoers grants |
+| every other hard block | blocked | blocked — unchanged |
+| soft-flag (needs confirmation) | unchanged | unchanged |
+| the unit's `NoNewPrivileges=true` | present | **removed** (install.sh does it) |
+| the system prompt | the default text | the default text **+ an OPERATOR MODE clause** |
+
+The `NoNewPrivileges` detail is not cosmetic. Under that flag `sudo`
+refuses to run *at all*:
+
+```
+sudo: The "no new privileges" flag is set, which prevents sudo from running as root.
+```
+
+So an operator-mode install whose unit still carries the flag has an agent
+whose `sudo` calls all fail — which reads as "sudo is broken" rather than
+"the flag is in the way". `install.sh` drops the flag when
+`security.allow_sudo` is true.
+
+### What it does NOT change
+
+- **The blast radius is the operator's sudoers grants, not root.** The
+  agent can only escalate as far as those grants allow. Grants are
+  normally `NOPASSWD` for a *specific* command (for example: `psql` as
+  the postgres superuser, `systemctl --user` for another Unix session).
+  A grant for `psql` is not a grant for `bash`.
+- **The hard blocks that protect the privilege boundary stay.** Writes to
+  `/etc/sudoers`, `/etc/passwd`, `/etc/shadow` and `/etc/systemd/system/`,
+  setuid bits, `rm -rf` on root paths, `curl|sh` and fork bombs are
+  refused in operator mode exactly as before.
+- **Every command is still audited** — `exec_audit.jsonl` gets the full
+  command line, the exit code and the outcome, in both modes.
+- **The agent cannot prompt its way past the grants.** A `sudo` call that
+  would need a password simply fails; the operator clause tells the model
+  not to try to work around it.
+
+### The trade-off, stated plainly
+
+Operator mode **widens the blast radius of a prompt injection**: in the
+default posture, a hostile instruction embedded in content the agent
+reads can at most run commands as the install's Unix user; in operator
+mode it can additionally use whatever the operator has granted. That is
+an acceptable trade when the operator has granted narrowly-scoped,
+specific commands and the agent's inputs are the operator's own. It is
+not acceptable if the agent reads attacker-controlled content — so the
+decision belongs to the operator of the install, per install, and should
+be written down next to the config.
 
 ### `sql_query`
 
