@@ -400,6 +400,36 @@ else
     # The shipped unit is a template: %h/harness is the install
     # directory. Render it for where this checkout actually is.
     sed "s|%h/harness|$REPO|g" "$REPO/systemd/harness.service" > "$UNIT_DIR/harness.service"
+    # Operator mode (2026-10-29). TWO flags have to go, and the second one
+    # is not obvious:
+    #
+    #   NoNewPrivileges=true -- under this flag sudo refuses to run at all
+    #     ("the no new privileges flag is set, which prevents sudo from
+    #     running as root"). It is not a password problem.
+    #
+    #   PrivateTmp=true -- in a USER unit systemd has to create a USER
+    #     NAMESPACE to do the /tmp bind-mount. Inside that namespace the
+    #     SETUID BIT IS INERT: sudo runs unprivileged and refuses with
+    #     "sudo must be owned by uid 0 and have the setuid bit set", and
+    #     every root-owned file appears to be owned by "nobody". So the
+    #     agent sees a machine where sudo is mysteriously broken.
+    #
+    # An install that enables security.allow_sudo MUST NOT carry either
+    # flag, or the agent's sudo calls fail no matter what the sudoers
+    # grants say.
+    ALLOW_SUDO="$(python3 -c "
+import yaml
+try:
+    sec = (yaml.safe_load(open('$REPO/config.yaml')) or {}).get('security') or {}
+    print('yes' if sec.get('allow_sudo') else 'no')
+except Exception:
+    print('no')
+")"
+    if [ "$ALLOW_SUDO" = "yes" ]; then
+        sed -i '/^NoNewPrivileges=true$/d' "$UNIT_DIR/harness.service"
+        sed -i '/^PrivateTmp=true$/d' "$UNIT_DIR/harness.service"
+        info "operator mode  sudo permitted (NoNewPrivileges and PrivateTmp dropped from the unit)"
+    fi
     chmod 644 "$UNIT_DIR/harness.service"
     info "unit          $UNIT_DIR/harness.service"
 

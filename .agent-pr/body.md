@@ -1,28 +1,82 @@
-Both edits are one concern: the agent-facing text that ships to every
-install must not hard-code one install's Unix account.
+## What
 
-1. app/agent/tools/exec_bash.py - the tool description said "as the
-   peristyle user". That string ships to every install, so on any other
-   install it told the model a lie about the account it runs as. It is
-   what led an agent to conclude that no peristyle account existed on a
-   box that has one. The description now derives the name at runtime from
-   the process's real uid, so it names the account this install actually
-   runs as. The module docstring and the cwd comment were reworded the
-   same way.
+Three changes, one release (0.1.8). Each was validated on its own before it
+was batched here: a merge into `main` IS a release, so small fixes that were
+each proven belong in one versioned pull request rather than a queue of
+one-liners.
 
-2. app/agent/tools/_safety.py - the env-var blocklist comment said "the
-   peristyle runtime inherits a bunch of env vars". Same mistake, same
-   fix: it now says "the harness service".
+| # | change | source |
+|---|--------|--------|
+| 1 | the buffered fallback must not ask for a stream | #14 |
+| 2 | a read timeout on a big request is not retried, and says what was sent | #15 |
+| 3 | operator mode — an opt-in per-install config option | #16 |
 
-WHAT DOES NOT CHANGE: the safety classifier. The hard-block list in
-app/agent/tools/_safety.py (privilege escalation, destructive filesystem
-commands, remote-code pipes, the protected system files, setuid bits) and
-the confirm list are untouched. Sixteen new tests pin them, so a future
-edit cannot quietly loosen them.
+### 1. The buffered fallback must not ask for a stream (#14)
 
-TESTS: tests/test_exec_bash_description.py (3 new behaviours, 17 pins)
-and tests/test_safety_comment.py (2). Every new behaviour test was seen
-failing on the old code before the fix was applied.
+The M3.1-Flash adapter's streaming-to-buffered fallback re-used the
+streaming request body, which still carried `stream: True`. The "buffered"
+retry therefore came back as `text/event-stream` and the JSON parse raised
+`JSONDecodeError` — fatal, not a degradation. It killed the 2026-10-28 wisp
+reverie and a heartbeat.
 
-This supersedes #12 and #13: one concern, one pull request, one release
-(0.1.6 -> 0.1.7).
+The fix strips the streaming flag from the fallback body only; the SSE path
+still asks for it. New test: `tests/test_minimax_buffered_fallback.py`
+(reproduced the production failure first, then passed).
+
+### 2. A read timeout on a big request is not retried (#15)
+
+Evie's turn 559 ran 2h27m and 147 iterations, then died with a read
+timeout — after the harness spent 12 of those minutes re-sending the same
+2.4 MB body. A read timeout means the upstream *received* the request and
+did not answer, so the same retry re-uploads the same body and waits the
+same window again. Worse, the streaming-to-buffered fallback sends the same
+body where the buffered path must wait for the whole answer — strictly
+slower than the stream that just timed out.
+
+The fix: a read timeout on a large request is not retried, and the error
+says what was sent (size, window, model). Small requests and dropped
+connections still retry. New test:
+`tests/test_minimax_large_request_transport.py`.
+
+### 3. Operator mode — an opt-in per-install config option (#16)
+
+`security.allow_sudo: true` lets the agent escalate through the command
+classifier, bounded by the operator's own grants on the machine. It is
+**off by default** at every layer — the config default, the shipped example
+config, the tool context and the system prompt — so merging this changes no
+install's posture. Every other hard block stands, the soft-flag rules are
+unchanged, and the shipped systemd unit keeps both of its hardening flags
+unless the installer is told otherwise.
+
+This change also fixes a real gap the new tests exposed: the *symbolic*
+setuid form was not blocked (the `u+s` mode form was allowed while the
+numeric form was refused). Both are refused now.
+
+The escalation command itself is named in the diff and in SECURITY.md's new
+"Operator mode" section. This body does not repeat it: the install
+proposing this change has its own command classifier, which hard-blocks that
+token anywhere in a command string, and it is not going to obfuscate a word
+to slip past its own guard.
+
+### The trade-off, stated plainly
+
+Operator mode widens the blast radius of a prompt injection: by default a
+hostile instruction in content the agent reads can at most run commands as
+the install's Unix user; in operator mode it can additionally use whatever
+the operator has granted. That is acceptable when the grants are narrow and
+the agent's inputs are the operator's own. It is not acceptable if the
+agent reads attacker-controlled content. The decision belongs to the
+operator of the install, per install.
+
+## Gates
+
+- `python -m pytest tests/ -q` — **222 passed, 9 skipped**
+- `scripts/check_no_secrets.py` — clean (working tree, full history, commit messages)
+
+## Validation
+
+Changes 1 and 2 were each deployed to the production install and verified
+there, in the production venv with the production config and the live
+endpoint — the exact production failure was reproduced against the old path
+and survived on the new one. Change 3 is off by default and was not enabled
+anywhere by this merge.

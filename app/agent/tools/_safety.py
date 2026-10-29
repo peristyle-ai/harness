@@ -215,15 +215,22 @@ def _build_peristyle_dsn(path: Path) -> str:
 import re as _re
 
 
+# Privilege escalation (sudo / su). These are hard blocks by DEFAULT.
+# Operator mode (2026-10-29) lifts them: an install with
+# `security.allow_sudo: true` may use sudo through exec_bash, bounded by
+# the operator's own sudoers grants. They are kept in a separate list so
+# the two postures cannot drift apart.
+_PRIVILEGE_ESCALATION_PATTERNS: list[tuple[_re.Pattern[str], str]] = [
+    (_re.compile(r"\bsudo\b"), "sudo not allowed (no privilege escalation)"),
+    (_re.compile(r"^\s*su(\s|$)"), "su not allowed (no privilege escalation)"),
+    (_re.compile(r"\bsu\s+-\s*"), "su - not allowed (no privilege escalation)"),
+]
+
+
 # Hard-blocked: deny outright, never run. Each pattern is matched
 # as a substring (with word-boundary care where needed). The
 # LLM is told in the system prompt that these are absolute.
 _HARD_BLOCK_PATTERNS: list[tuple[_re.Pattern[str], str]] = [
-    # Privilege escalation. The whole point of "without sudo" is
-    # that the agent can't escalate. Any sudo/su is a hard block.
-    (_re.compile(r"\bsudo\b"), "sudo not allowed (no privilege escalation)"),
-    (_re.compile(r"^\s*su(\s|$)"), "su not allowed (no privilege escalation)"),
-    (_re.compile(r"\bsu\s+-\s*"), "su - not allowed (no privilege escalation)"),
     # Catastrophic / destructive.
     (_re.compile(r"\brm\s+(-[a-zA-Z]*)?-rf?\s+/\s"), "rm -rf on root paths not allowed"),
     (_re.compile(r"\bmkfs(\.\w+)?\b"), "mkfs not allowed"),
@@ -240,6 +247,12 @@ _HARD_BLOCK_PATTERNS: list[tuple[_re.Pattern[str], str]] = [
     (_re.compile(r"(^|\s)/etc/systemd/system/"), "modifying /etc/systemd/system/* not allowed"),
     # Privilege elevation via setuid bits.
     (_re.compile(r"\bchmod\s+[0-7]*[4-7][0-7][0-7]\b"), "chmod with setuid/setgid bits not allowed"),
+    # The SYMBOLIC form was not covered: `chmod u+s file` slipped through
+    # while `chmod 4755 file` was blocked. Found by the operator-mode
+    # test (2026-10-29). The mode token is the run of mode characters
+    # after `chmod`; a filename that merely contains "+s" is not matched
+    # (the run stops at the space).
+    (_re.compile(r"\bchmod\s+[a-zA-Z=,+0-9]*\+s\b"), "chmod with setuid/setgid bits not allowed"),
     (_re.compile(r"\bchmod\s+777\b"), "chmod 777 not allowed"),
     # System-level systemd (mask/disable on system units, not user).
     (_re.compile(r"\bsystemctl\s+(mask|disable)\s+(?!(--user\s+))"), "systemctl mask/disable (system) not allowed; use --user"),
@@ -299,11 +312,18 @@ _SOFT_FLAG_PATTERNS: list[tuple[_re.Pattern[str], str]] = [
 ]
 
 
-def classify_command(command: str) -> tuple[str, str | None]:
+def classify_command(command: str, allow_sudo: bool = False) -> tuple[str, str | None]:
     """Inspect a shell command. Returns one of:
         ("allow", None)        — the command passes both filters
         ("block", reason)      — hard-blocked, will not run
         ("confirm", reason)    — soft-flagged, requires confirm=true
+
+    `allow_sudo=True` is OPERATOR MODE: the sudo/su hard blocks are lifted
+    (the install's `security.allow_sudo` is set). Everything else stays
+    hard-blocked — rm -rf on root paths, /etc/{passwd,shadow,sudoers},
+    setuid bits, curl|sh, fork bombs, systemctl mask/disable of system
+    units. The agent still cannot escalate beyond what the operator's
+    sudoers grants allow.
 
     The LLM is told in the system prompt:
       - "allow"   -> run it
@@ -314,7 +334,10 @@ def classify_command(command: str) -> tuple[str, str | None]:
     if not command or not command.strip():
         return "block", "empty command"
 
-    for pattern, reason in _HARD_BLOCK_PATTERNS:
+    patterns = list(_HARD_BLOCK_PATTERNS)
+    if not allow_sudo:
+        patterns = _PRIVILEGE_ESCALATION_PATTERNS + patterns
+    for pattern, reason in patterns:
         if pattern.search(command):
             return "block", reason
 

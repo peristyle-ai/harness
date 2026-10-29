@@ -66,6 +66,36 @@ from .base import BaseLLM, ContextWindowExceeded, LLMResponse, Message, ToolCall
 log = logging.getLogger(__name__)
 
 
+def _body_size(body: dict) -> int:
+    """The size of the JSON request body, in bytes.
+
+    Measured on the wire shape, not estimated from the message list: the
+    body carries the whole replayed turn, so the messages are the body.
+    """
+    try:
+        return len(json.dumps(body, default=str).encode("utf-8"))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _describe_transport_error(exc: Exception, body_bytes: int,
+                              timeout_s: int) -> Exception:
+    """Turn a bare transport error into one that says what was sent.
+
+    "ReadTimeout: The read operation timed out" is true and useless: it
+    does not say that the request was 2.4 MB, which is the thing the
+    operator can act on. The message names the request size, the window
+    it was given, and the upstream it was waiting on.
+    """
+    if isinstance(exc, httpx.ReadTimeout):
+        return httpx.ReadTimeout(
+            f"the upstream did not answer a {body_bytes / 1_000_000:.1f} MB "
+            f"request within {timeout_s}s (MiniMax-M3.1-Flash); the request "
+            f"was received but no answer came back"
+        )
+    return exc
+
+
 def _is_context_window_error(response: Any) -> bool:
     """True when the 400 is MiniMax's "context window exceeds limit (2013)".
 
@@ -82,6 +112,23 @@ def _is_context_window_error(response: Any) -> bool:
         "context window exceeds limit" in body
         or "context_length_exceeded" in body
     )
+
+
+# A request body at least this big is re-sending-EXPENSIVE.
+#
+# 2026-10-29, on the peristyle install: evie's turn 559 grew a 2.4 MB
+# request body (the live tail of a 147-iteration turn). The upstream
+# stopped answering it, and the retry ladder re-sent the whole 2.4 MB
+# body four times, each attempt waiting out the full 180s read
+# timeout: 12 minutes of a 2h27m turn re-sending a request that was not
+# going to be answered, and then the turn died anyway. Re-sending a
+# body that big is not a cheap retry, so the adapter stops retrying a
+# read timeout at this size and reports the failure at once.
+#
+# The threshold is a megabyte: a body that big carries roughly a
+# quarter-million tokens of context, which is the size at which the
+# upstream was already working hard when it went quiet.
+LARGE_REQUEST_BYTES = 1_000_000
 
 
 class LLM(BaseLLM):
@@ -168,6 +215,7 @@ class LLM(BaseLLM):
         def _bump() -> None:
             emitted[0] += 1
 
+        body_bytes = _body_size(body)
         try:
             data = self._stream_to_message(url, headers, body, on_delta,
                                            on_emit=_bump)
@@ -192,10 +240,31 @@ class LLM(BaseLLM):
                           "delta(s) (%s: %s); NOT retrying to avoid duplicate output",
                           emitted[0], type(e).__name__, e)
                 raise
+            if (isinstance(e, httpx.ReadTimeout)
+                    and body_bytes >= LARGE_REQUEST_BYTES):
+                # The streaming path and the buffered fallback send the
+                # SAME body. On a big body the fallback is not a second
+                # chance, it is the same multi-megabyte request again --
+                # and the buffered path has to wait for the WHOLE answer
+                # before it can report anything, so it is strictly
+                # slower than the stream that just timed out. Report the
+                # failure now instead of spending another window on it.
+                log.error("minimax_m31_flash: streaming path failed (%s: %s) "
+                          "on a %.1f MB request; not retrying it",
+                          type(e).__name__, e, body_bytes / 1_000_000)
+                raise _describe_transport_error(e, body_bytes, self.timeout_s) from e
             log.warning("minimax_m31_flash: streaming path failed (%s: %s); "
                         "falling back to buffered POST",
                         type(e).__name__, e)
-            return self._complete_buffered(url, headers, body, tools)
+            # The fallback must NOT ask for a stream. `body` still carries
+            # stream=True from _build_body, and the endpoint HONOURS it: the
+            # "buffered" retry came back as text/event-stream, so r.json()
+            # raised "JSONDecodeError: Expecting value: line 1 column 1
+            # (char 0)" and the turn died instead of degrading. Strip the
+            # flag for the fallback only -- the SSE path above still wants
+            # it (2026-10-29, peristyle install).
+            buffered_body = {k: v for k, v in body.items() if k != "stream"}
+            return self._complete_buffered(url, headers, buffered_body, tools)
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         return self._parse_anthropic_message(data, tools, latency_ms)
@@ -227,8 +296,15 @@ class LLM(BaseLLM):
 
     def _complete_buffered(self, url, headers, body, tools) -> LLMResponse:
         t0 = time.monotonic()
+        body_bytes = _body_size(body)
         try:
-            r = self._post_with_retry(url, headers=headers, body=body)
+            r = self._post_with_retry(
+                url, headers=headers, body=body,
+                # A read timeout means the upstream got the body and did
+                # not answer. Re-sending a big body is not cheap, so it
+                # is not repeated -- see LARGE_REQUEST_BYTES.
+                retry_on_read_timeout=body_bytes < LARGE_REQUEST_BYTES,
+            )
             r.raise_for_status()
         except httpx.HTTPStatusError as e:
             log.error("minimax_m31_flash HTTP error: %s body=%s",
@@ -238,7 +314,7 @@ class LLM(BaseLLM):
             raise
         except httpx.HTTPError as e:
             log.error("minimax_m31_flash transport error: %s", e)
-            raise
+            raise _describe_transport_error(e, body_bytes, self.timeout_s) from e
         if not r.content:
             # A 200 with an empty body happens when the upstream connection
             # was dropped mid-flight and the pooled connection was reused.
