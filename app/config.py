@@ -78,6 +78,20 @@ class _Security:
     # header. It lives in the config because the config is the only
     # file the operator has to protect.
     internal_token: str = ""
+    # Operator mode (2026-10-29). Off by default.
+    #
+    # When true, the agent may use `sudo` through exec_bash. It can only
+    # escalate as far as the OPERATOR's sudoers grants allow — in practice
+    # NOPASSWD grants for specific commands, not a root shell.
+    #
+    # Two things must both be true for this to work:
+    #   1. this flag, and
+    #   2. the unit must NOT set NoNewPrivileges=true — under that flag
+    #      sudo refuses to run at all ("the no new privileges flag is set,
+    #      which prevents sudo from running as root"), regardless of the
+    #      sudoers grants. install.sh drops the flag for operator-mode
+    #      installs.
+    allow_sudo: bool = False
 
 
 @dataclass(frozen=True)
@@ -460,6 +474,7 @@ def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
                 memory=sec["rate_limit"]["memory"],
             ),
             internal_token=str(sec.get("internal_token") or ""),
+            allow_sudo=bool(sec.get("allow_sudo", False) or False),
         ),
         uploads=_Uploads(
             dir=str(up.get("dir") or "uploads"),

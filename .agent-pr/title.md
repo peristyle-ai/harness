@@ -1,1 +1,1 @@
-fix(tools): the shipped text must not name one install's Unix account
+release: 0.1.8 — the LLM transport fixes and operator mode

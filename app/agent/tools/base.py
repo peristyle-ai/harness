@@ -23,6 +23,10 @@ class ToolContext:
     # may only be edited with the user's explicit permission. Empty
     # tuple = nothing protected.
     protected_paths: tuple[str, ...] = ()
+    # Operator mode (2026-10-29): this install allows the agent to run
+    # `sudo` through exec_bash, bounded by the operator's sudoers grants.
+    # Set from `security.allow_sudo` in config.yaml. False by default.
+    allow_sudo: bool = False
 
 
 @runtime_checkable
