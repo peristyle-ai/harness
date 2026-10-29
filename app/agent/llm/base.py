@@ -128,6 +128,7 @@ class BaseLLM(Protocol):
         body: dict,
         *,
         max_retries: int = 3,
+        retry_on_read_timeout: bool = True,
     ) -> Any:
         """POST with retry-on-5xx + 429 + transient network errors.
 
@@ -149,6 +150,23 @@ class BaseLLM(Protocol):
             attempt 3 → 4s
         Plus honours `Retry-After` if the server sends it (in seconds
         or HTTP-date format).
+
+        `retry_on_read_timeout` (2026-10-29): a read timeout is the one
+        failure in this list that is NOT cheap to repeat. It means the
+        upstream RECEIVED the request and did not answer within the
+        window -- so every retry re-sends the whole body and waits the
+        whole window again, for the same silence. On a multi-megabyte
+        body that is minutes per attempt: on the peristyle install a
+        single model call spent 12 minutes re-sending a 2.4 MB request
+        the upstream was not going to answer, and then the turn died
+        anyway. The caller sets this False when re-sending is expensive,
+        and the failure surfaces at once.
+
+        The other errors stay retryable: a dropped connection
+        (RemoteProtocolError) or a refused connect fails in SECONDS, and
+        the retry often succeeds -- it was the recovery on 2026-10-27,
+        when the same retry ladder turned a dropped connection into a
+        completed turn.
 
         Added 2026-10-20 after a 529 from MiniMax mid-iter-3
         with 6 tool calls already executed; the loop had no retry path
@@ -190,6 +208,13 @@ class BaseLLM(Protocol):
                     httpx.PoolTimeout, httpx.ConnectTimeout,
                     httpx.RemoteProtocolError) as e:
                 last_exc = e
+                # A read timeout is not a dropped connection: the body
+                # arrived and the answer did not. Repeating it re-uploads
+                # the body and waits the same window again, so the caller
+                # can switch it off when the body is big (see
+                # retry_on_read_timeout).
+                if isinstance(e, httpx.ReadTimeout) and not retry_on_read_timeout:
+                    raise
                 if attempt < max_retries:
                     delay = min(2 ** attempt, 8)
                     log.warning(
