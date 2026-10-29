@@ -1,28 +1,43 @@
-Both edits are one concern: the agent-facing text that ships to every
-install must not hard-code one install's Unix account.
+## What
 
-1. app/agent/tools/exec_bash.py - the tool description said "as the
-   peristyle user". That string ships to every install, so on any other
-   install it told the model a lie about the account it runs as. It is
-   what led an agent to conclude that no peristyle account existed on a
-   box that has one. The description now derives the name at runtime from
-   the process's real uid, so it names the account this install actually
-   runs as. The module docstring and the cwd comment were reworded the
-   same way.
+Some agents are not assistants but **operators**: the sysadmin of an install, driving installs, databases and services on a machine it is responsible for. Such an agent cannot finish the job when every privileged step needs a human present.
 
-2. app/agent/tools/_safety.py - the env-var blocklist comment said "the
-   peristyle runtime inherits a bunch of env vars". Same mistake, same
-   fix: it now says "the harness service".
+This adds **operator mode**: one per-install config option.
 
-WHAT DOES NOT CHANGE: the safety classifier. The hard-block list in
-app/agent/tools/_safety.py (privilege escalation, destructive filesystem
-commands, remote-code pipes, the protected system files, setuid bits) and
-the confirm list are untouched. Sixteen new tests pin them, so a future
-edit cannot quietly loosen them.
+```yaml
+security:
+  allow_sudo: true      # default: false
+```
 
-TESTS: tests/test_exec_bash_description.py (3 new behaviours, 17 pins)
-and tests/test_safety_comment.py (2). Every new behaviour test was seen
-failing on the old code before the fix was applied.
+## What it changes
 
-This supersedes #12 and #13: one concern, one pull request, one release
-(0.1.6 -> 0.1.7).
+- The `sudo`/`su` hard blocks in the command classifier are lifted, so `exec_bash` may use sudo. It can only escalate as far as the **operator's sudoers grants** allow — in practice `NOPASSWD` grants for specific commands (e.g. `psql` as the postgres superuser). A grant for `psql` is not a grant for `bash`.
+- The system prompt gains an **OPERATOR MODE clause**, so the model knows it may use sudo and what is *still* blocked. A silent change would leave the model believing sudo is blocked, and it would never try.
+- `install.sh` drops `NoNewPrivileges=true` from the unit for an operator-mode install. This is not cosmetic: under that flag sudo refuses to run **at all** (`sudo: The "no new privileges" flag is set, which prevents sudo from running as root`), so sudo calls would fail no matter what the sudoers grants say.
+
+## What it does NOT change
+
+- Every other hard block stands: `rm -rf` on root paths, `mkfs`, writes to `/etc/{passwd,shadow,sudoers}` and `/etc/systemd/system/`, setuid bits, `chmod 777`, `curl|sh`, fork bombs, `systemctl mask|disable` of a *system* unit. The soft-flag/confirmation rules are unchanged.
+- Every command is still audited to `exec_audit.jsonl`.
+
+## The trade-off, stated plainly
+
+Operator mode **widens the blast radius of a prompt injection**: by default, a hostile instruction in content the agent reads can at most run commands as the install's Unix user; in operator mode it can additionally use whatever the operator has granted. That is an acceptable trade when the grants are narrowly scoped and the agent's inputs are the operator's own — and it is not acceptable if the agent reads attacker-controlled content. The decision belongs to the operator of the install, per install.
+
+`SECURITY.md` gains an **Operator mode** section that says exactly this.
+
+## Also fixes a pre-existing classifier gap
+
+The new test exposed that the **symbolic** setuid form was not blocked: `chmod 4755 f` was refused, but `chmod u+s f` was allowed. Both are refused now.
+
+## Tests
+
+8 new cases in `tests/test_security.py`: default posture (sudo/su blocked), operator mode (allowed), the blocks that must survive operator mode, the soft flags, the prompt clause (present only in operator mode), the shipped example config defaulting to off, and the installer stripping the flag.
+
+Full suite: **211 passed, 9 skipped** (the skips need a live model/DB).
+
+## Notes for the reviewer
+
+- The config option is read defensively (`getattr` chain), so an install whose config predates the option behaves exactly as before.
+- The classifier's privilege patterns were split into their own list so the two postures cannot drift apart.
+- Per the repo's workflow this lands on `main` only after validation — @durthu is the approver of record.

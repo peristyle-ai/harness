@@ -1,1 +1,1 @@
-fix(tools): the shipped text must not name one install's Unix account
+feat(security): operator mode — an opt-in config option lets the agent use sudo
