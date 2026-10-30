@@ -47,10 +47,11 @@ Guard rails
 from __future__ import annotations
 
 import logging
-import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+from app.agent.names import canonical_agent_name
 
 log = logging.getLogger(__name__)
 
@@ -58,11 +59,11 @@ log = logging.getLogger(__name__)
 # activity check uses it to tell a reverie turn apart from a real one.
 REVERIE_TRAJECTORY_KIND = "reverie"
 
-# Agent names end up in SQL (the <agent>.turns table name), so they are
-# validated against this pattern before they are interpolated. The
-# installed roster is a config value, but the name still travels
-# through the DB, so it is checked here too.
-_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+# The agent name ends up in SQL (the <agent>.turns table name). The
+# schema form of the name is lower case and is validated before it is
+# interpolated -- see app/agent/names.py. The installed roster is a
+# config value, but the name still travels through the DB, so it is
+# checked here too.
 
 # The first characters of a reverie brief. The HMI uses it to render the
 # turn as a reverie block instead of a giant "user said this" bubble.
@@ -85,16 +86,15 @@ def activity_count(pool: Any, agent_name: str, hours: int) -> int:
     Reverie turns carry a trajectory marker and are excluded, so a
     nightly reverie never makes the next night look busy.
     """
+    schema = canonical_agent_name(agent_name)
     sql = f"""
         SELECT count(*)
-          FROM {agent_name}.turns
+          FROM {schema}.turns
          WHERE created_at > now() - make_interval(hours => %s)
            AND role = 'user'
            AND (trajectory IS NULL
                 OR trajectory->>'kind' IS DISTINCT FROM %s)
     """
-    if not _AGENT_NAME_RE.match(agent_name or ""):
-        raise ValueError(f"invalid agent name: {agent_name!r}")
     with pool.connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, (int(hours), REVERIE_TRAJECTORY_KIND))

@@ -23,20 +23,26 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Iterable
 
+from app.agent.names import canonical_agent_name
+
 log = logging.getLogger(__name__)
 
-# Agent names end up in SQL (the <agent>.conversations table name), so
-# they are validated against this pattern before they are interpolated.
+# The agent name ends up in SQL (the <agent>.conversations table name).
+# The name arrives in two forms and they are not interchangeable: the
+# DISPLAY form ('EXAMPLE'), which the roster stores and the HMI shows,
+# and the SCHEMA form ('example'), which names the table. Postgres folds
+# an unquoted identifier to lower case, so the schema is resolved with
+# canonical_agent_name() -- which also validates it, because it is
+# interpolated into SQL -- while the column keeps the display form.
 # The installed agent roster is a config value, but the name still
 # travels through the DB (public.group_agents), so it is checked here
-# too -- defence in depth for a table name.
-_AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+# too: defence in depth for a table name.
+# See app/agent/names.py.
 
 
 @dataclass
@@ -481,14 +487,16 @@ class GroupStore:
         though it is the most recently touched conversation row for
         this agent.
         """
-        if not _AGENT_NAME_RE.match(agent_name or ""):
-            raise ValueError(f"invalid agent name: {agent_name!r}")
+        # The SCHEMA is the lower-case form; the agent_name COLUMN keeps
+        # the display form, so list_conversations' exact-match filter
+        # (c.agent_name = %s) still finds the row.
+        schema = canonical_agent_name(agent_name)
         metadata = json.dumps({"kind": "group", "conversation_id": conversation_id})
         with self.pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
-                    INSERT INTO {agent_name}.conversations
+                    INSERT INTO {schema}.conversations
                         (id, user_id, agent_name, title, metadata, is_group)
                     VALUES (%s, NULL, %s, %s, %s::jsonb, TRUE)
                     ON CONFLICT (id) DO UPDATE
