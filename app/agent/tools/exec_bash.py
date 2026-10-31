@@ -1,6 +1,6 @@
 """exec_bash tool — execute a shell command as the install's own Unix user.
 
-Per Mal 2026-10-14: this is the first write-capable tool. Three
+Per the operator's 2026-10-14 direction: this is the first write-capable tool. Three
 hard rules:
   1. NO sudo, NO su, NO privilege escalation. The command runs
      in this process's own context, with this install's Unix user's

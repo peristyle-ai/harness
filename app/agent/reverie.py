@@ -1,6 +1,6 @@
 """Nightly reverie — the agent's own context-budget cleanup turn.
 
-Added 2026-10-23 (per Mal):
+Added 2026-10-23 (per the operator):
 
   "I want to clean up the optional reverie.md and enable its use as a
    config setting in config.yaml (enabled, timing, file target percentage,

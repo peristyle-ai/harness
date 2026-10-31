@@ -1,6 +1,6 @@
 """Shared safety + audit-log helpers for the agent's tools (memory + sql_query + exec_bash).
 
-After Mal 2026-10-15 simplification (drop read_file, list_directory,
+After the operator's 2026-10-15 simplification (drop read_file, list_directory,
 http_get because they were redundant with exec_bash), the path_safe
 helper and its the operator's home/ allowlist are no longer used. Kept
 elsewhere in this file: the audit_log, build_dsn, exec_audit_log,

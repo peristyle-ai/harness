@@ -1,6 +1,6 @@
 """Tests for the sliding context window (2026-10-25).
 
-The bug this exists to prevent: Evie's turn reached ~1.4M tokens in one
+The bug this exists to prevent: an agent's turn reached ~1.4M tokens in one
 request against MiniMax-M3.1-Flash's 1,000,000-token window and the API
 answered 400 "invalid params, context window exceeds limit (2013)".
 
@@ -247,7 +247,7 @@ def test_failed_turn_row_carries_the_error_AND_the_trajectory():
 
     AgentLoop._persist_partial_assistant_turn(
         loop,
-        agent_name="peribot",
+        agent_name="example",
         conv_id="conv-1",
         user_turn=object(),
         user_text="do the thing",
@@ -296,7 +296,7 @@ def test_disconnect_turn_still_uses_the_partial_text():
 
     AgentLoop._persist_partial_assistant_turn(
         loop,
-        agent_name="peribot",
+        agent_name="example",
         conv_id="conv-1",
         user_turn=object(),
         user_text="do the thing",

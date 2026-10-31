@@ -1,14 +1,15 @@
 # Code owners for peristyle-ai/harness.
 #
-# One owner: the Peristyle account (Grove). A pull request that changes
+# One owner: the repository's owner account. A pull request that changes
 # anything needs an approval from this account before it can merge.
 #
-# WHY THIS IS THE ONLY LINE: the agents (peribot, peribot) propose changes
+# WHY THIS IS THE ONLY LINE: the agents propose changes
 # through pull requests that are opened by a GitHub Actions workflow
 # using the repository's own GITHUB_TOKEN -- so the PR author is
 # `github-actions[bot]`, NOT the Peristyle account. The bot cannot
 # approve its own pull request, and it is not a code owner, so an
-# agent's pull request can only ever be approved and merged by Grove.
+# agent's pull request can only ever be approved and merged by that
+# account.
 #
 # The agents therefore cannot merge their own work, and cannot push to
 # main at all (branch protection allows no direct pushes).

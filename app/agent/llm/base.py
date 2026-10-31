@@ -156,7 +156,7 @@ class BaseLLM(Protocol):
         upstream RECEIVED the request and did not answer within the
         window -- so every retry re-sends the whole body and waits the
         whole window again, for the same silence. On a multi-megabyte
-        body that is minutes per attempt: on the production install a
+        body that is minutes per attempt: on a production install a
         single model call spent 12 minutes re-sending a 2.4 MB request
         the upstream was not going to answer, and then the turn died
         anyway. The caller sets this False when re-sending is expensive,

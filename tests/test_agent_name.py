@@ -30,12 +30,12 @@ from app.models.group import GroupStore
 class TestCanonicalAgentName(unittest.TestCase):
     def test_lowercase_name_is_unchanged(self):
         self.assertEqual(canonical_agent_name("example"), "example")
-        self.assertEqual(canonical_agent_name("peribot"), "peribot")
+        self.assertEqual(canonical_agent_name("example"), "example")
 
     def test_display_name_folds_to_the_schema_form(self):
         # The case that broke the group chat.
         self.assertEqual(canonical_agent_name("EXAMPLE"), "example")
-        self.assertEqual(canonical_agent_name("Wisp"), "peribot")
+        self.assertEqual(canonical_agent_name("EXAMPLE"), "example")
 
     def test_surrounding_whitespace_is_stripped(self):
         self.assertEqual(canonical_agent_name("  EXAMPLE  "), "example")

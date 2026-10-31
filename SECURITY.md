@@ -35,7 +35,9 @@ repository, and it keeps the conversation private:
 
     https://github.com/peristyle-ai/harness/security/advisories/new
 
-You can also email **operator@example.com**.
+Report through that form. It is the only route that keeps the
+conversation private, and this repository publishes no contact
+address.
 
 Please include:
 

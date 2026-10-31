@@ -2,7 +2,7 @@
 """CLI to create or update a user in public.users.
 
 Usage:
-    sudo -u <harness-account> python3 tools/create_user.py \
+    sudo -u "$RUNTIME_USER" python3 tools/create_user.py \
         --email admin@example.com \
         --password '...' \
         --display-name 'Admin' \

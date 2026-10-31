@@ -1,6 +1,6 @@
 """Group chat orchestration — @mentions drive the turns.
 
-Added 2026-10-23 (per Mal): "in the group chat, agents will only respond
+Added 2026-10-23 (per the operator): "in the group chat, agents will only respond
 if there is an @<agent_name>, but multiple agents can be mentioned in one
 message (so eg. '@one @two, please update your git repos' -> one and
 two would both have a turn)".

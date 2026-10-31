@@ -1,6 +1,6 @@
 """memory_delete tool — permanently delete a long-form memory.
 
-Added 2026-10-18 per Mal's request. Previously, deletion was
+Added 2026-10-18 per the operator's request. Previously, deletion was
 operator-only (had to be done via psql because the LLM
 accidentally created duplicate memories). Now exposed to the LLM
 as a regular tool, scoped to a single memory_id so it's hard to

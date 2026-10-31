@@ -1,6 +1,6 @@
 """The streaming -> buffered fallback must ask for a BUFFERED response.
 
-2026-10-29 (found on the production install, in production): when the SSE
+2026-10-29 (found on a production install): when the SSE
 path failed before emitting anything, the fallback re-used the same body
 dict, which still carried body["stream"]=True from _build_body. The
 endpoint honours that flag and answers text/event-stream, so the
@@ -9,7 +9,7 @@ endpoint honours that flag and answers text/event-stream, so the
     JSONDecodeError: Expecting value: line 1 column 1 (char 0)
 
 which is a FATAL error: it ended whole turns instead of degrading. It
-killed the 2026-10-28 peribot reverie and the 17:06 heartbeat the same day.
+killed the 2026-10-28 reverie and the 17:06 heartbeat the same day.
 
 These tests are offline. The fake client mimics the endpoint's real
 behaviour: a POST whose body carries stream:true comes back as SSE and

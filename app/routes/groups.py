@@ -1,6 +1,6 @@
 """Group chat API — /api/v1/groups/*.
 
-Added 2026-10-23 (per Mal): "implement a new group table and a create
+Added 2026-10-23 (per the operator): "implement a new group table and a create
 group chat feature for admin users. They can create a group, with any
 users from the public.users table. Any user added to a group will see it
 appear as another row in the landing dash that lists the current agents.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Propose a change as a pull request, without touching main.
 #
-# This is the path an agent (peribot, peribot) uses when it finds something
+# This is the path an agent uses when it finds something
 # worth fixing. It exists so that proposing a change is ONE command and
 # cannot accidentally land on main.
 #
@@ -22,7 +22,7 @@
 # WHAT HAPPENS NEXT: pushing the branch triggers the `agent-pr`
 # workflow, which opens the pull request using the repository's own
 # GITHUB_TOKEN. The pull request is authored by `github-actions[bot]`,
-# which cannot approve its own pull request, so it waits for Grove.
+# which cannot approve its own pull request, so it waits for the operator.
 set -euo pipefail
 
 # The HARNESS checkout -- not whichever repository this script happens to
@@ -133,8 +133,8 @@ PY
     die "nothing staged -- the worktree has no changes to propose"
   fi
 
-  git -c user.name="${GIT_AUTHOR_NAME:-Grove}" \
-      -c user.email="${GIT_AUTHOR_EMAIL:-operator@example.com}" \
+  git -c user.name="${GIT_AUTHOR_NAME:-Harness Agent}" \
+      -c user.email="${GIT_AUTHOR_EMAIL:-peristyle-ai@users.noreply.github.com}" \
       commit -q -m "$TITLE
 
 $BODY
@@ -147,7 +147,7 @@ workflow, so it waits for a code owner to approve it."
   echo
   echo "pushed agent/$SLUG"
   echo "the agent-pr workflow will open the pull request in a moment"
-  echo "it will wait for Grove to approve it -- agents cannot merge"
+  echo "it will wait for the operator to approve it -- agents cannot merge"
   echo
   echo "watch it:"
   echo "  gh pr list --repo peristyle-ai/harness --head agent/$SLUG"

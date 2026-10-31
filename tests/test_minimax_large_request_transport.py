@@ -1,6 +1,6 @@
 """A large request that times out must fail fast, and must say why.
 
-2026-10-29, on the production install (production): peribot's turn 559 ran
+2026-10-29, on a production install: a turn ran
 2h27m and 147 iterations, then died with
 
     ReadTimeout: The read operation timed out

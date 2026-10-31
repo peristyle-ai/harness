@@ -3,7 +3,7 @@
 // API responses are NOT cached; only the static assets + the / landing page.
 //
 // Versioning (Phase 14, 2026-10-17): bump CACHE_NAME to invalidate any
-// stale shell installed by an older PWA. Mal's iOS / PWA-installed
+// stale shell installed by an older PWA. The operator's iOS / PWA-installed
 // clients were using an old app.js that hit /api/v1/chat (the old
 // conversation-id-based endpoint) instead of /api/v1/entities/<name>/chat,
 // so sending a message in the HMI silently failed. Bumping the cache

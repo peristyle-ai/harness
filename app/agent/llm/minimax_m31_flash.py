@@ -22,14 +22,14 @@ shape — i.e. {"effort": "medium"}. The diatomic z.ai adapter reads the
 same field but interprets it as z.ai's `{"type": "enabled"}` shape —
 each adapter maps the dict onto its provider's wire format.
 
-Provisioned 2026-10-20 for a M3.1-Flash test (per Mal's request).
-Superseded 2026-10-21 (per Mal): every agent now runs this adapter.
+Provisioned 2026-10-20 for a M3.1-Flash test (per the operator's request).
+Superseded 2026-10-21 (per the operator): every agent now runs this adapter.
 The agents moved off minimax_m3 (via the global llm: block) and off
 z.ai's glm_5_3_flash; they all share one MiniMax endpoint and one API
 key. An agent with a per-agent block sets effort=medium explicitly; one
 without a `thinking` key uses the adapter default (max).
 
-SSE streaming (2026-10-21, per Mal): complete() now streams by default. The
+SSE streaming (2026-10-21, per the operator): complete() now streams by default. The
 transport reassembles the same Anthropic message dict a buffered response
 would have produced and hands it to the SAME parser, so tool calls, thinking
 blocks, stop_reason and usage are unchanged.
@@ -116,7 +116,7 @@ def _is_context_window_error(response: Any) -> bool:
 
 # A request body at least this big is re-sending-EXPENSIVE.
 #
-# 2026-10-29, on the production install: peribot's turn 559 grew a 2.4 MB
+# 2026-10-29, on a production install: a turn grew a 2.4 MB
 # request body (the live tail of a 147-iteration turn). The upstream
 # stopped answering it, and the retry ladder re-sent the whole 2.4 MB
 # body four times, each attempt waiting out the full 180s read
@@ -262,7 +262,7 @@ class LLM(BaseLLM):
             # raised "JSONDecodeError: Expecting value: line 1 column 1
             # (char 0)" and the turn died instead of degrading. Strip the
             # flag for the fallback only -- the SSE path above still wants
-            # it (2026-10-29, peristyle install).
+            # it (2026-10-29, a production install).
             buffered_body = {k: v for k, v in body.items() if k != "stream"}
             return self._complete_buffered(url, headers, buffered_body, tools)
 
@@ -490,7 +490,7 @@ class LLM(BaseLLM):
         #      hallucination/fabrication failure mode where the model
         #      narrated work it didn't actually do — the thinking
         #      trail makes it visible when the model's text contradicts
-        #      its own chain-of-thought. (Added 2026-10-20 per Mal.)
+        #      its own chain-of-thought. (Added 2026-10-20 per the operator.)
         thinking_blocks: list[dict] = []
         for block in data.get("content", []):
             btype = block.get("type")

@@ -10,7 +10,7 @@ The harness service was then restarted -- twice, 25 seconds apart -- to
 deploy a streaming fix, and the restart killed the worker mid-turn.
 
 The user turn was in the turns table. The assistant turn was not. The
-UI showed Mal's message and silence, and no amount of refreshing would
+UI showed the operator's message and silence, and no amount of refreshing would
 change that.
 
 Why a registry
@@ -72,7 +72,7 @@ _INSTALLED = False
 #
 # That is not hypothetical. On 2026-10-26 09:12:44 a service restart
 # during a live turn left TWO identical assistant rows (ids 196 and
-# 197) in peribot.turns: same content, byte-identical trajectories,
+# 197) in <agent>.turns: same content, byte-identical trajectories,
 # and the second row's computed latency_ms was ONE MILLISECOND SMALLER
 # than the first's -- which is only possible if the two callers
 # interleaved: one computed its timestamp first, the other committed
@@ -189,7 +189,7 @@ class TurnState:
     # updates that row instead of inserting a second assistant turn.
     interrupted_turn_id: int | None = None
     events: list[dict] = field(default_factory=list)
-    # Mid-turn steering queue (2026-10-25, per Mal). A user message that
+    # Mid-turn steering queue (2026-10-25, per the operator). A user message that
     # arrives while this turn is running is queued here and injected into
     # the live message list at the next iteration boundary, so the model
     # sees it on its NEXT call, inside the SAME turn -- OpenClaw's

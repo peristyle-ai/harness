@@ -139,7 +139,7 @@ a:hover { color: var(--accent-hover); }
 }
 .msg.assistant.thought .thought-body { opacity: 0.9; white-space: pre-wrap; word-break: break-word; }
 .msg .queued-note { color: var(--accent, #4f9aff); font-style: italic; }
-/* The collapsible thought section (2026-10-25, per Mal): the model's
+/* The collapsible thought section (2026-10-25, per the operator): the model's
    interim narration, one line per iteration. It sits under the answer,
    next to the tool-call trace, and is LIVE ONLY -- it is not a turn, so
    it never enters the chat history and it is gone after a refresh (like

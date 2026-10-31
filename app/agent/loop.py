@@ -251,7 +251,7 @@ class ChatResponse:
 def _resolve_upload_dir() -> Any:
     """Where uploaded files live, WITHOUT needing a Flask app context.
 
-    Bug, 2026-10-22 15:33 (Mal): an agent's turn failed INSTANTLY with
+    Bug, 2026-10-22 15:33 (the operator): an agent's turn failed INSTANTLY with
     "stream ended without a final event" because the server logged
     "Working outside of application context". The NDJSON streaming path
     runs the agent loop in a daemon thread (api.py's `pump`), which has
@@ -374,7 +374,7 @@ class AgentLoop:
         whatever we have so the user can pick up on page refresh
         instead of losing the turn entirely.
 
-        error_message (2026-10-25, per Mal): when the turn FAILED, the
+        error_message (2026-10-25, per the operator): when the turn FAILED, the
         row carries the error the user sees ("⚠️ ...") AND the full
         trajectory, so the failed turn is debuggable from the turns
         table alone. It used to be written from the generator's finally
@@ -830,11 +830,11 @@ class AgentLoop:
         live_tokens = 0
         system_base = messages[0].content if messages else ""
         window_notice = ""
-        # Wall-clock cap for one turn (2026-10-25, per Mal: big turns are
+        # Wall-clock cap for one turn (2026-10-25, per the operator: big turns are
         # fine, but a single turn must not run forever).
         max_turn_seconds = int(self.config.agent.max_turn_seconds or 0)
         # The thought stream is NOT persisted as turns (2026-10-25, per
-        # Mal: "the thought streams did come through, but as separate turns
+        # operator: "the thought streams did come through, but as separate turns
         # which has consumed the chat history in the webchat and also
         # polluted the agent's turns table with erroneous turns").
         #
@@ -901,7 +901,7 @@ class AgentLoop:
         # (app/agent/turn_guard.py) uses this registry to write an
         # "interrupted" turn before the process goes away. Without it a
         # server restart mid-turn leaves a user turn with no reply and
-        # no trace -- exactly what happened to Mal's message on
+        # no trace -- exactly what happened to the operator's message on
         # 2026-10-21 21:12.
         turn_state = turn_guard.TurnState(
             conv_id=conv_id,
@@ -922,7 +922,7 @@ class AgentLoop:
         turn_guard.register(turn_state)
         try:
             while tool_iters < max_iters:
-                # Wall-clock cap for one turn (2026-10-25, per Mal). The
+                # Wall-clock cap for one turn (2026-10-25, per the operator). The
                 # iteration cap (500) is the primary guard; this is the
                 # backstop for a turn that is slow rather than long.
                 if max_turn_seconds and (time.monotonic() - t0) > max_turn_seconds:
@@ -968,7 +968,7 @@ class AgentLoop:
                 # client as a 'thought' event (below) and rendered as a
                 # collapsible section in the live bubble. It is NOT
                 # written as a turn: a turn row per iteration put 132
-                # rows into one turn's history (Mal, 2026-10-25 14:02).
+                # rows into one turn's history (the operator, 2026-10-25 14:02).
                 # The narration is still recorded -- in the turn's own
                 # trajectory (iterations[].assistant_text), which the
                 # emission record below carries -- so the trail survives a
@@ -1438,7 +1438,7 @@ class AgentLoop:
                             role="system",
                             content=f"{system_base}\n\n{window_notice}",
                         )
-                # --- mid-turn steering (2026-10-25, per Mal) --------------
+                # --- mid-turn steering (2026-10-25, per the operator) --------------
                 # A user message that arrived while this turn was running
                 # is injected HERE, at the iteration boundary, so the model
                 # sees it on its NEXT call -- inside the same turn. This is
@@ -1605,7 +1605,7 @@ class AgentLoop:
         except Exception as e:
             log.exception("handle_chat_streaming fatal: %s", e)
             # Persist the FAILED turn NOW — before the error event goes out
-            # to the browser (2026-10-25, per Mal: "the jsonb column did
+            # to the browser (2026-10-25, per the operator: "the jsonb column did
             # not get populated for the failed turn, just the error
             # message"). The finally block below writes this row too, but
             # it runs at generator teardown — AFTER the response has been
@@ -1688,7 +1688,7 @@ class AgentLoop:
         a check-then-act across a database write: two callers can both
         read "not written yet" and both write. It happened on
         2026-10-26 -- a restart during a live turn left two identical
-        assistant rows (ids 196 and 197) in peribot.turns, with the
+        assistant rows (ids 196 and 197) in <agent>.turns, with the
         second row's computed latency ONE MILLISECOND SMALLER than the
         first's, which is only possible if the two callers interleaved.
         See turn_guard.claim_interrupt.
@@ -1802,7 +1802,7 @@ class AgentLoop:
         """Append a conditional warning to the system prompt when the
         agent's own context is near its caps.
 
-        Two independent conditions (Mal, 2026-10-22):
+        Two independent conditions (the operator, 2026-10-22):
 
         1. an identity file is at/over `pressure_threshold` of its byte
            cap -> tell the agent to move the detail out to memories
@@ -1914,7 +1914,7 @@ class AgentLoop:
             agent_name=agent_name, agent_tone="concise, direct, friendly",
         )
         # Refactor 2026-10-17: last 50 turns always included in the prompt
-        # so continuity is preserved across logout/login (per Mal's request).
+        # so continuity is preserved across logout/login (per the operator's request).
         #
         # 2026-10-22 (prompt duplication fix): the fresh user turn has
         # ALREADY been written to the table by the time we get here
@@ -1963,7 +1963,7 @@ class AgentLoop:
         bootstrap_block = agent_bootstrap.render() if agent_bootstrap else ""
 
         # Conditional system prompt: warn the agent when its own context
-        # is near its caps (Mal, 2026-10-22). The agent is the one who
+        # is near its caps (the operator, 2026-10-22). The agent is the one who
         # can fix it -- by moving detail into memories, skills, scripts
         # or docs -- so it gets told, rather than the file silently
         # tripping a boot-time check or a memory silently dropping out

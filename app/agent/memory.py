@@ -560,7 +560,7 @@ class MemoryAPI:
     def get_setting(self, key: str, default: Any = None) -> Any:
         """Read a runtime app setting (public.app_settings).
 
-        2026-10-25, per Mal: the admin UI needs a switch that survives a
+        2026-10-25, per the operator: the admin UI needs a switch that survives a
         restart (the burger-menu "persist thought stream" toggle). A
         missing key is NOT an error -- it means "not configured" and the
         caller's default applies.
@@ -1095,7 +1095,7 @@ class MemoryAPI:
     ) -> dict:
         """Permanently delete a long-form memory (and its chunks).
 
-        Added 2026-10-18 per Mal's request. Previously, deletion was
+        Added 2026-10-18 per the operator's request. Previously, deletion was
         operator-only (had to be done via psql because the LLM
         accidentally created duplicate memories). Now exposed to the
         LLM as the `memory_delete` tool, scoped to a single
@@ -1536,7 +1536,7 @@ class MemoryAPI:
         """Last N turns of the persistent conversation for (agent, user).
 
         Returns [] if no conversation exists yet. The HMI uses this
-        to render the chat view (Mal: 'just the last 50 turn messages
+        to render the chat view (operator: 'just the last 50 turn messages
         from the turns table to be rendered at all times').
 
         Group conversations are excluded (migration 014): a group chat
@@ -1544,7 +1544,7 @@ class MemoryAPI:
         group's turns.
 
         The narration rows (model='thought-stream') are EXCLUDED (2026-10-25,
-        per Mal). They used to be one row per iteration, which put 132 rows
+        per the operator). They used to be one row per iteration, which put 132 rows
         into a single turn's history -- the 50-row window filled with
         narration instead of conversation, and the turns table filled with
         rows that were not turns. The narration is now live-only (a

@@ -154,7 +154,7 @@
     }
     if (page === 'index') {
       const ep = $('entityPane'); if (ep) ep.style.display = '';
-      // The "new group" button is admin-only: per Mal (2026-10-23)
+      // The "new group" button is admin-only: per the operator (2026-10-23)
       // groups are created by admins.
       const ng = $('newGroupBtn');
       if (ng) ng.style.display = (user.role === 'admin') ? '' : 'none';
@@ -789,7 +789,7 @@
     // 2026-10-25: a narration row (model='thought-stream') is NEVER
     // rendered as a bubble. The narration used to be persisted as one row
     // per iteration, and each row became its own bubble -- 132 of them in
-    // one turn, eating the chat history (Mal: "the thought streams did
+    // one turn, eating the chat history (operator: "the thought streams did
     // come through, but as separate turns which has consumed the chat
     // history"). The narration is now live-only: a collapsible section
     // inside the bubble, gone after a refresh. A legacy row that somehow
@@ -849,7 +849,7 @@
           }
         } catch (e) { console.error('upload failed', e); }
       }
-      // 2026-10-25 (per Mal): sending while a turn is ALREADY running
+      // 2026-10-25 (per the operator): sending while a turn is ALREADY running
       // STEERS that turn instead of starting a second one. The server
       // queues the message for the running turn and injects it into the
       // live context at the next iteration boundary -- so you can answer
@@ -908,7 +908,7 @@
         if (msg === 'unauthorized') showLogin();  // session expired -> show login
         // Persist the failure server-side (2026-10-22). The ⚠️ bubble
         // above lives only in the DOM -- without this, the next refresh
-        // makes the failure look like silence again, which is how Mal
+        // makes the failure look like silence again, which is how the operator
         // lost an agent's turn to a server restart on 2026-10-21.
         // The endpoint is idempotent: if the server already wrote
         // something for this turn (partial turn, interrupted marker, or
@@ -944,7 +944,7 @@
       const liveBody = document.createElement('div');
       liveBody.className = 'live-body';
       liveBody.textContent = '…';
-      // The per-iteration thought trail (2026-10-25, per Mal): the model's
+      // The per-iteration thought trail (2026-10-25, per the operator): the model's
       // interim narration, one line per iteration. It is a COLLAPSIBLE
       // section (a <details>, exactly like the tool-call summary) and it
       // is LIVE ONLY -- it is not a turn, so it does not enter the
@@ -1067,7 +1067,7 @@
             iterCount += 1;
               liveDelta = '';
             // The marker goes into the THOUGHT SECTION, not into the body:
-            // the body is for the answer (Mal: "i don't want the
+            // the body is for the answer (operator: "i don't want the
             // thinking ... (iter 10) to appear" in the answer slot).
             const marker = document.createElement('div');
             marker.className = 'thought-line marker';

@@ -268,7 +268,7 @@ def main() -> int:
         check("an unknown mention is reported back",
               st == 200 and "nosuchagent" in notices, notices)
 
-        # --- 12. DM <-> group conversation isolation (Mal 2026-10-23) ----
+        # --- 12. DM <-> group conversation isolation (operator, 2026-10-23) ------
         # The group owns its conversation id; a DM must never load it,
         # even when the group conversation is the most recently touched
         # conversation row for that agent.

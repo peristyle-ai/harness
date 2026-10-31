@@ -1,6 +1,6 @@
 """Group chat store — persistence for public.groups & friends.
 
-Added 2026-10-23 (per Mal): group chats. An admin creates a group from
+Added 2026-10-23 (per the operator): group chats. An admin creates a group from
 the landing page; the group has
 
   * members  — humans picked from public.users (the canonical user table

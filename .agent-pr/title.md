@@ -1,1 +1,1 @@
-fix(api): an admin must see the turn another user started
+fix(repo): the public repository must not name one install

@@ -26,31 +26,31 @@ from app.agent.group_chat import (
 
 
 class TestParseMentions(unittest.TestCase):
-    AGENTS = ["peribot", "peribot", "peribot"]
+    AGENTS = ["alpha", "beta", "gamma"]
 
     def test_single_mention(self):
-        matched, unknown = parse_mentions("@peribot please update the repos", self.AGENTS)
-        self.assertEqual(matched, ["peribot"])
+        matched, unknown = parse_mentions("@alpha please update the repos", self.AGENTS)
+        self.assertEqual(matched, ["alpha"])
         self.assertEqual(unknown, [])
 
     def test_multiple_mentions_both_answer(self):
         matched, unknown = parse_mentions(
-            "@peribot @peribot, please update your git repos", self.AGENTS
+            "@alpha @gamma, please update your git repos", self.AGENTS
         )
-        self.assertEqual(matched, ["peribot", "peribot"])
+        self.assertEqual(matched, ["alpha", "gamma"])
         self.assertEqual(unknown, [])
 
     def test_mention_order_is_preserved(self):
-        matched, _ = parse_mentions("@peribot @peribot @peribot go", self.AGENTS)
-        self.assertEqual(matched, ["peribot", "peribot", "peribot"])
+        matched, _ = parse_mentions("@gamma @alpha @beta go", self.AGENTS)
+        self.assertEqual(matched, ["gamma", "alpha", "beta"])
 
     def test_duplicate_mention_only_one_turn(self):
-        matched, _ = parse_mentions("@peribot do it @peribot and again", self.AGENTS)
-        self.assertEqual(matched, ["peribot"])
+        matched, _ = parse_mentions("@alpha do it @alpha and again", self.AGENTS)
+        self.assertEqual(matched, ["alpha"])
 
     def test_case_insensitive(self):
-        matched, _ = parse_mentions("@Wisp hello", self.AGENTS)
-        self.assertEqual(matched, ["peribot"])
+        matched, _ = parse_mentions("@Alpha hello", self.AGENTS)
+        self.assertEqual(matched, ["alpha"])
 
     def test_no_mention_means_no_agent(self):
         matched, unknown = parse_mentions("just a normal message", self.AGENTS)
@@ -58,14 +58,14 @@ class TestParseMentions(unittest.TestCase):
         self.assertEqual(unknown, [])
 
     def test_unknown_mention_reported(self):
-        matched, unknown = parse_mentions("@nosuchagent hello @peribot", self.AGENTS)
-        self.assertEqual(matched, ["peribot"])
+        matched, unknown = parse_mentions("@nosuchagent hello @alpha", self.AGENTS)
+        self.assertEqual(matched, ["alpha"])
         self.assertEqual(unknown, ["nosuchagent"])
 
     def test_agent_not_in_roster_is_unknown(self):
-        matched, unknown = parse_mentions("@peribot hi", ["peribot", "peribot"])
+        matched, unknown = parse_mentions("@gamma hi", ["alpha", "beta"])
         self.assertEqual(matched, [])
-        self.assertEqual(unknown, ["peribot"])
+        self.assertEqual(unknown, ["gamma"])
 
     def test_email_address_is_not_a_mention(self):
         matched, unknown = parse_mentions("mail me at bob@example.com", self.AGENTS)
@@ -74,11 +74,11 @@ class TestParseMentions(unittest.TestCase):
 
     def test_at_all_expands_to_roster(self):
         matched, _ = parse_mentions("@all status please", self.AGENTS)
-        self.assertEqual(matched, ["peribot", "peribot", "peribot"])
+        self.assertEqual(matched, ["alpha", "beta", "gamma"])
 
     def test_mention_in_the_middle(self):
-        matched, _ = parse_mentions("hey @peribot what about the repos?", self.AGENTS)
-        self.assertEqual(matched, ["peribot"])
+        matched, _ = parse_mentions("hey @alpha what about the repos?", self.AGENTS)
+        self.assertEqual(matched, ["alpha"])
 
     def test_underscore_and_dash_in_name(self):
         matched, _ = parse_mentions("@some_agent-x hi", ["some_agent-x"])
@@ -88,27 +88,27 @@ class TestParseMentions(unittest.TestCase):
 class TestRenderEntry(unittest.TestCase):
     def test_own_past_reply_is_an_assistant_message(self):
         out = render_entry(
-            {"author_type": "agent", "author_name": "peribot", "content": "done"}, "peribot"
+            {"author_type": "agent", "author_name": "alpha", "content": "done"}, "alpha"
         )
         self.assertEqual(out, {"role": "assistant", "content": "done"})
 
     def test_other_agent_is_labelled(self):
         out = render_entry(
-            {"author_type": "agent", "author_name": "peribot", "content": "done"}, "peribot"
+            {"author_type": "agent", "author_name": "gamma", "content": "done"}, "alpha"
         )
         self.assertEqual(out["role"], "user")
-        self.assertIn("peribot", out["content"])
+        self.assertIn("gamma", out["content"])
 
     def test_human_is_labelled(self):
         out = render_entry(
-            {"author_type": "user", "author_name": "the operator", "content": "hello"}, "peribot"
+            {"author_type": "user", "author_name": "the operator", "content": "hello"}, "alpha"
         )
         self.assertEqual(out["role"], "user")
         self.assertIn("the operator", out["content"])
 
     def test_system_is_labelled(self):
         out = render_entry(
-            {"author_type": "system", "author_name": "", "content": "notice"}, "peribot"
+            {"author_type": "system", "author_name": "", "content": "notice"}, "alpha"
         )
         self.assertEqual(out["role"], "user")
         self.assertIn("system", out["content"])
@@ -119,36 +119,36 @@ class TestBuildContext(unittest.TestCase):
         return [
             {"id": 1, "author_type": "user", "author_name": "the operator", "content": "older"},
             {"id": 2, "author_type": "user", "author_name": "the operator", "content": "current"},
-            {"id": 3, "author_type": "agent", "author_name": "peribot", "content": "first reply"},
+            {"id": 3, "author_type": "agent", "author_name": "alpha", "content": "first reply"},
         ]
 
     def test_split_around_the_current_message(self):
-        before, after = build_context(self._msgs(), 2, "peribot")
+        before, after = build_context(self._msgs(), 2, "gamma")
         self.assertEqual(len(before), 1)
         self.assertIn("older", before[0]["content"])
         self.assertEqual(len(after), 1)
         self.assertIn("first reply", after[0]["content"])
 
     def test_second_agent_sees_the_first_agents_reply_as_context(self):
-        """peribot is the second agent: peribot's reply must not be rendered
-        as peribot's own output."""
-        before, after = build_context(self._msgs(), 2, "peribot")
+        """gamma is the second agent: alpha's reply must not be rendered
+        as gamma's own output."""
+        before, after = build_context(self._msgs(), 2, "gamma")
         self.assertEqual(after[0]["role"], "user")
-        self.assertIn("peribot", after[0]["content"])
+        self.assertIn("alpha", after[0]["content"])
 
     def test_first_agent_sees_nothing_after(self):
         # The transcript is re-read before each agent's turn, so when
         # the FIRST agent runs, nobody has replied to this message yet.
-        before, after = build_context(self._msgs()[:2], 2, "peribot")
+        before, after = build_context(self._msgs()[:2], 2, "alpha")
         self.assertEqual(after, [])
         self.assertEqual(before[0]["role"], "user")
 
     def test_own_reply_in_the_past_is_an_assistant_message(self):
         msgs = [
-            {"id": 1, "author_type": "agent", "author_name": "peribot", "content": "mine"},
+            {"id": 1, "author_type": "agent", "author_name": "alpha", "content": "mine"},
             {"id": 2, "author_type": "user", "author_name": "the operator", "content": "current"},
         ]
-        before, _after = build_context(msgs, 2, "peribot")
+        before, _after = build_context(msgs, 2, "alpha")
         self.assertEqual(before[0]["role"], "assistant")
 
 

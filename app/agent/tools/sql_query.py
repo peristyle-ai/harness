@@ -1,7 +1,7 @@
 """sql_query tool — run a read-only SQL SELECT against the harness or
 peristyle DB.
 
-Per Mal 2026-10-14: any table in either DB is in scope (no schema
+Per the operator's 2026-10-14 direction: any table in either DB is in scope (no schema
 restriction). Read-only — refuse anything that isn't a SELECT.
 
 We parse the SQL with a regex (not a full parser) to enforce the

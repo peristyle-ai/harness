@@ -135,7 +135,7 @@ class _AgentLimits:
     max_searches_per_turn: int
     max_pins_per_turn: int
     max_unpins_per_turn: int
-    # Wall-clock cap for ONE turn (2026-10-25, per Mal: big turns are
+    # Wall-clock cap for ONE turn (2026-10-25, per the operator: big turns are
     # fine, but a turn must not run forever). 0 = no cap.
     max_turn_seconds: int
     # Token budget for the LIVE part of a turn (the messages the loop
@@ -312,7 +312,7 @@ def _make_llm(d: dict) -> _Llm:
     we default to None (which tells the glm_5_3_flash adapter to omit
     the field from the request and use the API default)."""
     # The thinking field can arrive as a string from ${ENV_VAR}
-    # substitution (e.g. CLAWBIE_LLM_THINKING={"type": "disabled"}
+    # substitution (e.g. MYAGENT_LLM_THINKING={"type": "disabled"}
     # gets substituted as a string into the YAML). The z.ai API
     # expects a dict here, so JSON-parse it if needed.
     import json

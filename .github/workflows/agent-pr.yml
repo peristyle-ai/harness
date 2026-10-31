@@ -2,7 +2,7 @@
 #
 # WHY THIS EXISTS
 # ---------------
-# The agents working in this repository (peribot, peribot) are not allowed
+# The agents working in this repository are not allowed
 # to push to `main`, and they are not allowed to merge. Branch
 # protection requires a pull request plus one approval from a code
 # owner, and the only code owner is the Peristyle account.
@@ -17,7 +17,7 @@
 # repository's own GITHUB_TOKEN. The pull request is therefore authored
 # by `github-actions[bot]`, which cannot approve its own pull request
 # and is not a code owner -- so the only way it can ever be merged is
-# for Grove to approve it.
+# for the operator to approve it.
 #
 # WHAT THE AGENT PROVIDES
 # -----------------------

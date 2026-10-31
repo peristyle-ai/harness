@@ -1,6 +1,6 @@
 """Prompt-pressure warning tests (2026-10-22).
 
-Two conditional system-prompt warnings (Mal, 2026-10-22):
+Two conditional system-prompt warnings (the operator, 2026-10-22):
 
   1. an identity file at/over `prompt.pressure_threshold` of its byte cap
      -> warn: move the detail out to memories (via the memory tools) or

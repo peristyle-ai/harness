@@ -40,7 +40,7 @@ _ALLOWED_MIME = frozenset({
     "image/webp",
     "image/heic",
     "image/heif",
-    # documents (added 2026-10-19 per Mal's request)
+    # documents (added 2026-10-19 per the operator's request)
     "application/pdf",
     "text/csv",
     "text/html",
@@ -1004,7 +1004,7 @@ def admin_settings_get():
     setting was `persist_thought_stream` (persist the model's interim
     narration as its own turn); it was removed on 2026-10-25 when the
     narration became live-only -- a collapsible section in the bubble
-    instead of a row per iteration (Mal: "the thought streams did come
+    instead of a row per iteration (operator: "the thought streams did come
     through, but as separate turns which has consumed the chat history").
     """
     _user, err = _require_admin()
@@ -1047,7 +1047,7 @@ def admin_settings_put(key):
 @login_required_json
 def admin_exec_audit():
     """Tail the exec_audit.jsonl log. Operator-only: role=admin.
-    Phase 2 (Mal 2026-10-14): lets Mal/Grove grep recent exec_bash
+    Phase 2 (2026-10-14): lets the operator grep recent exec_bash
     calls without shell access to the harness. Default returns the
     last 50 entries; ?limit=N raises it (max 1000). Optional
     ?outcome= filters by outcome (ok|blocked|confirm_required|error|timeout).
@@ -1203,7 +1203,7 @@ def entity_chat(name: str):
             "content_type": str(a.get("content_type", ""))[:128],
             "size": int(a.get("size", 0) or 0),
         })
-    # --- mid-turn steering (2026-10-25, per Mal) ---------------------------
+    # --- mid-turn steering (2026-10-25, per the operator) ---------------------------
     # A message that arrives while a turn is ALREADY running for this
     # agent is queued for that turn instead of starting a second,
     # parallel one. The loop injects it into the live message list at the
@@ -1689,7 +1689,7 @@ def entity_reset_conversation(name: str):
 
     That destroyed the turn data (LLM conversation history), so
     once you clicked "New conversation" the prior conversation was
-    gone forever. Per Mal 2026-10-19 08:43 we need the turn data
+    gone forever. Per the operator, 2026-10-19 08:43, we need the turn data
     preserved for future LLM retraining.
 
     Now the flow is:

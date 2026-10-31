@@ -1,51 +1,82 @@
 ## What
 
-`GET /api/v1/entities/<name>/turns/active` looked the in-flight turn up
-with the user who STARTED it:
+This repository is public. It shipped with identifiers of one install still
+in it. This change removes them and pins the properties that let them in.
 
-```python
-state = turn_guard.find(agent_name=name, user_id=user_id)
-```
+What was in the tree:
 
-So a browser watching an agent that another session had started saw
-`{"active": false}` — while the agent was deep inside a turn.
+| Where | What |
+|---|---|
+| `SECURITY.md` | a personal mailbox, as the second way to report a vulnerability |
+| `scripts/agent_propose.sh` | the commit identity: an operator's name and a personal mailbox |
+| `.github/CODEOWNERS`, `.github/workflows/agent-pr.yml` | the operator's name, four times |
+| `app/`, `scripts/` | the operator's name, in 46 comments, in three grammatical forms |
+| `app/agent/llm/base.py`, `minimax_m31_flash.py` | one install's name used as if it were the vendor's, in a comment describing behaviour for every install |
+| `app/agent/loop.py`, `app/agent/turn_guard.py` | one install's agent name, in a comment about a duplicate turn |
+| `app/config.py` | one install's agent name, as the example of an env var |
+| `app/routes/api.py` | an operator-and-assistant pair named in a route comment |
+| `tools/create_user.py` | a Unix account, in a usage example |
+| `tests/test_safety_comment.py` | a module-level tuple of the Unix accounts this code is deployed under |
+| `tests/` | one install's agent roster |
 
-## Why that matters
+(The identifiers themselves are not repeated here. A pull request that removes
+a leak must not put it back in the history.)
 
-That endpoint exists for one reason: the live bubble in the web chat is
-client-side DOM, so a refresh (or a dropped connection) loses it while
-the turn keeps running server-side. The endpoint replays the turn's
-buffered events so the bubble can be rebuilt.
+## Why it matters
 
-With a user-scoped lookup, the rebuild silently could not happen for
-any browser that was not the one that sent the message — a second tab,
-a second browser, or a colleague watching the same agent. The chat then
-looked dead for the whole turn, and the answer arrived in the database
-with nobody watching it. That is the "the agent is stuck" symptom this
-endpoint exists to prevent, reproduced by the lookup itself.
+A public repository is read by strangers, and it is indexed. A comment that
+names the account, the mailbox or the roster of ONE install does not stay in
+that install — it ships, and it tells a reader who runs this and who to write
+to. The vendor's name is fine (it is the repository's own name); the
+operator's personal details and the machine's account names are not.
 
-Observed on a live install: a turn that ran 151 iterations over 43
-minutes was `active: true` for the session that started it and
-`active: false` (a 17-byte body) for the browser that was watching it.
+The tuple of account names is the sharpest example. It existed to assert
+that an account name did not appear in a comment — and it was itself the
+leak, because it wrote the account names down in the repository.
 
-## The fix
+## How it is fixed
 
-The read is split from the steering lookup, which stays user-scoped on
-purpose (one user's message must never be queued into another user's
-turn).
+The identifiers are gone, and each replacement is a generic word: *a production
+install*, *the operator*, *a runtime role*.
 
-- the user's own turn is found first, exactly as before;
-- for an **admin**, the lookup falls back to the agent's turn,
-  whichever session started it;
-- a member still only ever sees their own turn.
+Three properties are then pinned by tests:
 
-The fallback is admin-only on purpose: an in-flight turn's buffered
-events contain the turn's own text, and that is the operator's business,
-not every member's.
+**1. `tests/test_safety_comment.py` — the blocklist comment, pinned by shape.**
+The old test listed the accounts to ban. The new one bans the *shape* of an
+account (a lowercase token with an underscore or a digit) and the vendor's
+name, and skips any token that also appears in another shipped file (a tool
+name, a role name, a config key). The old list is gone; the assertion is
+stronger, because it now catches an account nobody wrote down.
 
-## Tests
+**2. `tests/test_no_install_identifiers.py` — new, six rules.** None of them
+contains an account name, a hostname or an address:
 
-`tests/test_active_turn_visibility.py` pins the behaviour: an admin
-sees the agent's turn, a member does not, the user's own turn is still
-found by the user-scoped lookup, and the route goes through the helper
-rather than doing its own lookup.
+- a mailbox is acceptable only at a placeholder domain or with a role local
+  part (`security@`, `support@`) — a personal local part is a person;
+- a path into a home directory is acceptable only with a placeholder account;
+- a `sudo` switch to another user is acceptable only for a well-known system
+  account;
+- a systemd user unit is never acceptable — it names the account a unit runs
+  as;
+- a constant named for a collection of accounts or hosts is never acceptable
+  when it is assigned one — that is the shape of the old leak;
+- the agent roster must live in `config.yaml`, not in the source.
+
+Each rule was checked against the tree it replaced: on `main`, three of them
+fail. The hostname rule is deliberately absent — a generic hostname shape also
+matches hex colours and unicode escapes, so it is too noisy to gate on, and
+the docstring says so rather than pretending otherwise.
+
+**3. The roster in the tests.** One install's agent names become `alpha`,
+`beta`, `gamma` and `example`, and `default_agent` becomes the template's own
+`peribot` — which is what `config.yaml.example` already ships, so the CI
+installs the template's schema and not this project's.
+
+## Note: the published history still contains the mailbox
+
+This change fixes the tree. The commit that put the mailbox in `SECURITY.md`
+is already on `main` and already public, and "fix the leak and move on" is not
+enough — the commit is in the history, and a rewrite is an operator's
+decision, not an agent's. It is flagged here, not taken.
+
+The version is bumped to 0.1.12: a merge into `main` is a release.
