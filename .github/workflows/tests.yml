@@ -29,6 +29,32 @@ jobs:
       - name: no secret was committed
         run: python scripts/check_no_secrets.py
 
+  public-ref-scan:
+    # The working tree is not the whole public repository.  Every branch
+    # is a public page, and a branch that was merged and then left
+    # behind still publishes the tree it was merged from -- which, for
+    # a branch that predates a de-identification sweep, still names the
+    # install it was merged from.
+    #
+    # This job applies the same identifier rules to every branch the
+    # remote advertises, so that a stale branch cannot quietly
+    # re-publish what the working-tree guard just removed.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every branch, not a shallow clone: the branches ARE what is
+          # being scanned.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: no public branch carries one install's identifiers
+        run: python scripts/check_public_refs.py
+
   pytest:
     runs-on: ubuntu-latest
 

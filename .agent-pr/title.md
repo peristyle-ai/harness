@@ -1,1 +1,1 @@
-fix(repo): the agent names the first sweep missed
+check(refs): the identifier rules must hold on every public branch, not just the tree

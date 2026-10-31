@@ -1,56 +1,75 @@
-## What
+The working tree is not the whole public repository.
 
-The de-identification sweep in #22 was driven by a scan that was
-**truncated at 30 lines**. Every hit past that point was missed — and the
-misses were not all in tests.
+`tests/test_no_install_identifiers.py` scans the tree, and it does its
+job. But every branch is a public page too, and a branch that was
+merged and then left behind still publishes the tree it was merged
+from. For a branch that predates a de-identification sweep, that tree
+still names the install it was merged from -- so the sweep fixes `main`
+and the names stay one click away on the branch list.
 
-Six files still carried one install's agent roster, and one of them was
-shipped tooling:
+That is not a hypothesis: it is what this repository looked like this
+week. The sweep landed, `main` went clean, and the branches merged
+before it kept publishing what the sweep had just removed. This change
+makes that state impossible to miss again.
 
-| Where | What |
-|---|---|
-| `scripts/build_init.py` | three regexes hardcoded one install's agent name, while the rest of the file parameterised it |
-| `tests/test_install_config.py` | the roster, as a literal tuple |
-| `tests/test_memory_delete.py`, `tests/test_memory_recent_rework.py` | the roster, in an `agent_name=` position |
-| `tests/test_reverie.py`, `tests/test_loop_narrate_guard.py`, `tests/test_steering_and_thought_stream.py` | the roster, in comments and in call arguments |
+WHAT CHANGES
 
-## Why the build_init.py one is not just a leak
+- `scripts/identifier_rules.py` (new) holds the rules, once. The
+  working-tree guard and the new gate apply the same rules; two copies
+  of "the rules" is how they drift apart, and a rule that only one of
+  them applies is a rule that is not enforced.
+- `scripts/check_public_refs.py` (new) applies them to every branch
+  the remote advertises, and to every text file in that branch's
+  tree. It fetches a branch the local clone has never seen, so it
+  cannot pass by looking at less than the remote has.
+- `tests/test_check_public_refs.py` (new) plants a branch carrying a
+  mailbox and watches the gate fail on it. A gate that has never been
+  seen failing is not a gate.
+- `tests/test_no_install_identifiers.py` now imports the shared rules,
+  and gains one test that the rules still MATCH what they look for.
+  Every other assertion in that file is an absence, so a rule set that
+  quietly stopped matching would have made them all pass.
+- `.github/workflows/tests.yml` gains a `public-ref-scan` job.
 
-`build_init.py` turns a `pg_dump` of one install's agent schema into the
-TEMPLATED `schema/init.sql` every install ships: the source schema is
-replaced by `:"agent_name"`, and the index names — which carry the agent's
-name as a prefix — are rewritten into a `\gexec` pair that builds them at
-run time.
+The agent-roster rule -- the one added in #23 -- moves into the shared
+module as well, so the branch gate applies it too. A rule that only
+the working-tree guard applies is a rule that is not enforced.
 
-Three of those rewrites used a hardcoded name while the rest of the file
-used `_SRC`, the source schema read from `HARNESS_SOURCE_SCHEMA`. **Nothing
-in the repository sets that variable** — not the script, not the tests, not
-a wrapper. So for every invocation that did not happen to set it, those
-three rewrites matched nothing, and the generated SQL kept the source
-schema's own name in it. The generator silently produced a file for one
-schema only.
+THE GATES REPORT WHERE, NOT WHAT
 
-They now follow the parameter, and the parameterisation is pinned by a test
-that drives the generator with a source schema that is neither the
-template's agent nor the hardcoded name.
+A gate that prints the identifier it found has republished it. A CI log
+on a public repository is public, indexed and immutable, and it
+outlives the branch that carried the identifier -- so printing the
+value would make "delete the branch" pointless. Both gates report the
+branch, the file and the rule, and never the value; the value is still
+there for anyone who opens the file.
 
-## The guard, extended
+EXIT CODES
 
-`tests/test_no_install_identifiers.py` gains a rule for the roster: a name
-in an **agent-name position** must be the template's agent (read from
-`config.yaml.example`) or an obvious placeholder. The positions are the
-schema-qualified form (`<agent>.turns`), the three forms the code passes a
-name in (`agent_name=`, `"agent":`, `HARNESS_AGENT`), and an agent name as
-the prefix of a generated identifier.
+0 clean, 1 a branch carries an identifier, 2 INCONCLUSIVE. A gate that
+cannot see is not a gate, so "I looked at nothing" is a failure, not a
+pass.
 
-The rule names no agent: it reads the template's roster out of the config
-and compares. Against the tree before this change it reports six of the
-seven leaks, including the one in the shipped tooling.
+KNOWN STATE
 
-## The lesson, written down
+This job is RED on `main` today, and it is telling the truth. Five
+public branches still carry identifiers:
 
-A scan with `| head -30` in it is a scan that stops where the output stops.
-The first sweep trusted one and shipped a partial result. The complete scan
-now returns zero hits across the whole tree, with no truncation.
+- four branches merged before the sweep, which still publish the tree
+  they were merged from; and
+- the Dependabot branch, which was cut after the first sweep and
+  before the second one, so it still carries the agent names the
+  second sweep removed.
 
-The version is bumped to 0.1.13: a merge into `main` is a release.
+That fifth one is the gate earning its keep: the two sweeps cleaned
+`main`, and neither of them looked at a branch.
+
+The gate names the branches. Deleting them is a decision about this
+repository's public record rather than a piece of hygiene, so it is not
+one an agent should make on its own -- and the job stays red until it
+is made. That is the exit: the gate goes green the moment the stale
+branches are gone, and it does not rot in the meantime.
+
+And it cannot be un-published from the history: a commit that was once
+a branch tip stays reachable, and stays served. That is a fact about
+GitHub, not a defect in this gate.
