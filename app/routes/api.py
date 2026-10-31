@@ -1421,6 +1421,37 @@ def _safe_name(name: str) -> str:
     return name
 
 
+def _visible_active_turn(name: str, user: Any) -> Any:
+    """The in-flight turn this user may see for an agent, or None.
+
+    WHY THIS IS NOT JUST ``turn_guard.find(agent_name=name,
+    user_id=user_id)``
+
+    The registry can match a turn by the user who started it.  That
+    user-scoped match is RIGHT for steering: one user's message must
+    never be queued into another user's turn.
+
+    It was wrong for the READ.  The browser that watches an agent is not
+    always the browser session that started the turn -- a second tab, a
+    second browser, or a colleague watching the same agent are all
+    ordinary.  The read then answered "no active turn" while the agent
+    was deep inside one, the live bubble could not be rebuilt after a
+    refresh, and the chat looked dead for the whole turn.  That is
+    exactly the "the agent is stuck" symptom this endpoint exists to
+    prevent, so the read must not depend on WHICH session is watching.
+
+    So: the user's own turn first, and for an ADMIN the agent's turn
+    whatever started it.  A member still only ever sees their own.
+    """
+    user_id = user.id if user else None
+    state = turn_guard.find(agent_name=name, user_id=user_id)
+    if state is not None:
+        return state
+    if user is not None and getattr(user, "role", "member") == "admin":
+        return turn_guard.find(agent_name=name)
+    return None
+
+
 @bp.route("/entities/<name>/turns/active", methods=["GET"])
 @login_required_json
 def entity_turn_active(name: str):
@@ -1435,12 +1466,14 @@ def entity_turn_active(name: str):
     This endpoint exposes the in-flight turn's buffered NDJSON events so
     the UI can rebuild the bubble (iteration count, tool calls, partial
     text) after a refresh, and poll until the turn finishes.
+
+    An admin watching an agent sees the turn another user started --
+    see ``_visible_active_turn``.
     """
     if not _agent_exists(name):
         return jsonify({"error": f"unknown agent: {name!r}"}), 400
     user = current_user()
-    user_id = user.id if user else None
-    state = turn_guard.find(agent_name=name, user_id=user_id)
+    state = _visible_active_turn(name, user)
     if state is None:
         return jsonify({"active": False}), 200
     snap = state.buffer_snapshot()
