@@ -39,7 +39,8 @@ AGENT_DUMP = os.environ.get("AGENT_DUMP", "/tmp/agent_dump.sql")
 OUT = os.environ.get("OUT", "/tmp/harness_audit/schema/init.sql")
 # The schema the dump was taken from. The generator rewrites it to the
 # agent's name, so it only matters when re-generating from a dump.
-_SRC = re.escape(os.environ.get("HARNESS_SOURCE_SCHEMA", "peribot"))
+_SRC_RAW = os.environ.get("HARNESS_SOURCE_SCHEMA", "peribot")
+_SRC = re.escape(_SRC_RAW)
 
 # The live public schema belongs to SEVERAL projects (the harness, the
 # website's contact form, the starter-pack orders). These are the harness's.
@@ -464,14 +465,14 @@ CREATE SCHEMA IF NOT EXISTS :"agent_name";
         # with format(), and \\gexec to run its output. This is detected
         # on the SOURCE form, before the templating.
         m = re.match(
-            r"^CREATE (UNIQUE )?INDEX (?:IF NOT EXISTS )?(peribot_\w+) "
+            rf"^CREATE (UNIQUE )?INDEX (?:IF NOT EXISTS )?({_SRC}_\w+) "
             rf"ON {_SRC}\.(\w+) (.*);$",
             st)
         if m:
             unique, index_name, table, rest = m.groups()
             # the live index names are "<agent>_memories_created_at_idx" --
             # the agent name, an underscore, then the suffix
-            suffix = index_name[len(_SRC):]
+            suffix = index_name[len(_SRC_RAW):]
             # The index body may contain a single quote -- WITH (m='16')
             # -- which would TERMINATE the format string. So the body is
             # passed as a %s ARGUMENT (not %L, which would quote it) and
@@ -488,10 +489,10 @@ CREATE SCHEMA IF NOT EXISTS :"agent_name";
             continue
 
         # now template the statements that psql can interpolate
-        st = re.sub(r"\bperibot\.", ':"agent_name".', st)
+        st = re.sub(rf"\b{_SRC}\.", ':"agent_name".', st)
         st = st.replace(f"DEFAULT '{_SRC}'::text", "DEFAULT :'agent_name'::text")
         # the sequence names
-        st = re.sub(r"\bperibot\.(\w+_id_seq)\b", ':"agent_name".\1', st)
+        st = re.sub(rf"\b{_SRC}\.(\w+_id_seq)\b", ':"agent_name".\1', st)
         out.append(st + "\n")
 
     out.append("\nCOMMIT;\n")

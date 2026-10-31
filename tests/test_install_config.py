@@ -59,7 +59,7 @@ def test_the_config_has_only_this_installs_agent():
     cfg = yaml.safe_load(render_config(INSTALL, generated))
     assert cfg["app"]["agents"] == ["agent"]
     assert cfg["app"]["default_agent"] == "agent"
-    for other in ("peribot", "peribot", "peribot"):
+    for other in ("peribot", "second"):
         assert other not in cfg["app"]["agents"], \
             f"{other} is not part of this install"
     # No per_agent block: one agent, one API key.

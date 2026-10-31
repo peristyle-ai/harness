@@ -112,6 +112,50 @@ IDENTIFIER_LIST_RX = re.compile(
     re.M,
 )
 
+# --- the agent roster -----------------------------------------------------
+#
+# An agent name is not a secret, but a roster IS an install's identity:
+# one install's three agent names tell a reader what that install is.
+# The template ships ONE agent, `peribot` (config.yaml.example), and every
+# other name in the shipped tree has to be an obvious placeholder.
+#
+# The roster is therefore pinned by POSITION: a name in one of the four
+# places where the code means "an agent name" must be the template's agent
+# or a placeholder.  That catches a real roster without the test ever
+# naming one.
+
+# `<agent>.conversations`, `<agent>.turns`, ... -- the schema-qualified
+# form, which is how an agent name reaches SQL.
+SCHEMA_QUALIFIED_RX = re.compile(
+    r"\b([a-z][a-z0-9_]{1,24})\.(?:conversations|turns|memory_chunks|"
+    r"memories|memory_chunks_pkey)\b"
+)
+
+# `agent_name="x"`, `"agent": "x"`, `HARNESS_AGENT", "x"` -- the three
+# forms the code passes a name in.
+AGENT_NAME_POSITIONS_RX = re.compile(
+    r"agent_name\s*=\s*[\"']([a-z][a-z0-9_]*)[\"']"
+    r"|[\"']agent[\"']\s*:\s*[\"']([a-z][a-z0-9_]*)[\"']"
+    r"|HARNESS_AGENT[A-Z_]*[\"']\s*,\s*[\"']([a-z][a-z0-9_]*)[\"']"
+)
+
+# An agent name as the PREFIX of a generated identifier -- the live index
+# names are `<agent>_memories_created_at_idx`, so a rewrite rule that
+# matches them has to know the agent's name.  A rewrite rule that
+# hardcodes one instead of using the parameter is how one install's agent
+# name ends up in the shipped tooling.
+GENERATED_NAME_PREFIX_RX = re.compile(
+    r"\(\s*([a-z][a-z0-9_]{1,24})_\\?w\+\s*\)"
+)
+
+# Names that are obviously placeholders rather than an install's roster.
+GENERIC_AGENT_NAMES = {
+    "alpha", "beta", "gamma", "example", "examples",
+    "first", "second", "third",
+    "agent_a", "agent_b", "agent_one", "agent_two",
+    "mine", "other", "another", "nosuchagent", "testbot",
+}
+
 
 def _shipped_files():
     """Every file that ships with the repository, guards excluded."""
@@ -242,3 +286,59 @@ def test_agent_roster_is_not_hardcoded():
         "the roster belongs"
     )
     assert "default_agent:" in doc
+
+
+def _template_agent_names():
+    """The agent names the template ships, read from the example config."""
+    doc = (ROOT / "config.yaml.example").read_text()
+    names = set()
+    default = re.search(r"^\s*default_agent:\s*([A-Za-z0-9_]+)\s*$", doc, re.M)
+    if default:
+        names.add(default.group(1).lower())
+    block = re.search(r"^\s*agents:\s*\n((?:\s*-\s*[A-Za-z0-9_]+\s*\n)+)", doc, re.M)
+    if block:
+        for line in block.group(1).splitlines():
+            names.add(line.strip().lstrip("-").strip().lower())
+    return names
+
+
+def test_no_install_agent_roster_is_published():
+    """Only the template's agent, or an obvious placeholder.
+
+    The template ships one agent.  A name in an agent-name POSITION that
+    is neither that agent nor a placeholder is one install's roster,
+    and the repository must not carry it.
+    """
+    allowed = _template_agent_names() | GENERIC_AGENT_NAMES
+    assert allowed, "the template's agent roster could not be read"
+
+    # The schema-qualified form only means a schema in the files that
+    # speak SQL.  In JavaScript `data.turns` is an object property, not
+    # a Postgres schema, so the same shape there is a false positive.
+    sql_suffixes = {".py", ".sql", ".sh"}
+
+    offenders = []
+    for path, text in _corpus().items():
+        if path.suffix in sql_suffixes:
+            for match in SCHEMA_QUALIFIED_RX.finditer(text):
+                name = match.group(1).lower()
+                if name not in allowed:
+                    offenders.append(f"{path.relative_to(ROOT)}: {name}")
+        for match in AGENT_NAME_POSITIONS_RX.finditer(text):
+            for group in match.groups():
+                if group is None:
+                    continue
+                name = group.lower()
+                if name not in allowed:
+                    offenders.append(f"{path.relative_to(ROOT)}: {name}")
+        if path.suffix in sql_suffixes:
+            for match in GENERATED_NAME_PREFIX_RX.finditer(text):
+                name = match.group(1).lower()
+                if name not in allowed:
+                    offenders.append(f"{path.relative_to(ROOT)}: {name}")
+    assert not offenders, (
+        "the shipped source must not carry one install's agent roster: "
+        f"{sorted(set(offenders))}. The template ships "
+        f"{sorted(_template_agent_names())}; anything else in an "
+        "agent-name position must be an obvious placeholder."
+    )
