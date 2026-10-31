@@ -1,82 +1,107 @@
 ## What
 
-Three changes, one release (0.1.8). Each was validated on its own before it
-was batched here: a merge into `main` IS a release, so small fixes that were
-each proven belong in one versioned pull request rather than a queue of
-one-liners.
+An install whose agent name is not lower case could never take a turn in a
+group chat. Every `@mention` failed with:
 
-| # | change | source |
-|---|--------|--------|
-| 1 | the buffered fallback must not ask for a stream | #14 |
-| 2 | a read timeout on a big request is not retried, and says what was sent | #15 |
-| 3 | operator mode — an opt-in per-install config option | #16 |
+    could not open the conversation for EXAMPLE: invalid agent name: 'EXAMPLE'
 
-### 1. The buffered fallback must not ask for a stream (#14)
+This adds `app/agent/names.py` with `canonical_agent_name()` and uses it for
+the **schema identifier** only, in the two places that interpolated an agent
+name into a table name.
 
-The M3.1-Flash adapter's streaming-to-buffered fallback re-used the
-streaming request body, which still carried `stream: True`. The "buffered"
-retry therefore came back as `text/event-stream` and the JSON parse raised
-`JSONDecodeError` — fatal, not a degradation. It killed the 2026-10-28 wisp
-reverie and a heartbeat.
+## The symptom
 
-The fix strips the streaming flag from the fallback body only; the SSE path
-still asks for it. New test: `tests/test_minimax_buffered_fallback.py`
-(reproduced the production failure first, then passed).
+Found on a live install whose agent name was not lower case
+(`app.agents: [EXAMPLE]`, pie directory `pie/<AGENT>/`):
 
-### 2. A read timeout on a big request is not retried (#15)
+* the 1:1 chat works fine,
+* the group chat is 100% broken for that agent - every mention, every group,
+* the install looks healthy: the service is up, the schema is right, the
+  agent answers in 1:1.
 
-Evie's turn 559 ran 2h27m and 147 iterations, then died with a read
-timeout — after the harness spent 12 of those minutes re-sending the same
-2.4 MB body. A read timeout means the upstream *received* the request and
-did not answer, so the same retry re-uploads the same body and waits the
-same window again. Worse, the streaming-to-buffered fallback sends the same
-body where the buffered path must wait for the whole answer — strictly
-slower than the stream that just timed out.
+Nothing validates `app.agents` at boot, so there is no early warning.
 
-The fix: a read timeout on a large request is not retried, and the error
-says what was sent (size, window, model). Small requests and dropped
-connections still retry. New test:
-`tests/test_minimax_large_request_transport.py`.
+## Root cause
 
-### 3. Operator mode — an opt-in per-install config option (#16)
+`app/models/group.py` (and `app/agent/reverie.py`) validated the agent name
+against a lower-case-only pattern before interpolating it into SQL:
 
-`security.allow_sudo: true` lets the agent escalate through the command
-classifier, bounded by the operator's own grants on the machine. It is
-**off by default** at every layer — the config default, the shipped example
-config, the tool context and the system prompt — so merging this changes no
-install's posture. Every other hard block stands, the soft-flag rules are
-unchanged, and the shipped systemd unit keeps both of its hardening flags
-unless the installer is told otherwise.
+    _AGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 
-This change also fixes a real gap the new tests exposed: the *symbolic*
-setuid form was not blocked (the `u+s` mode form was allowed while the
-numeric form was refused). Both are refused now.
+The guard exists for a good reason - the name becomes a table name - but it
+was checking the wrong string. The agent name is in fact two things:
 
-The escalation command itself is named in the diff and in SECURITY.md's new
-"Operator mode" section. This body does not repeat it: the install
-proposing this change has its own command classifier, which hard-blocks that
-token anywhere in a command string, and it is not going to obfuscate a word
-to slip past its own guard.
+| form | example | what it is |
+|---|---|---|
+| SCHEMA | `example` | the per-agent schema (`<agent>.conversations`, `.turns`, `.memories`) - interpolated into SQL, so it is the injection guard |
+| DISPLAY | `EXAMPLE` | what the roster stores, what the HMI shows, what the `conversations.agent_name` column holds |
 
-### The trade-off, stated plainly
+Postgres folds an unquoted identifier to lower case, so `EXAMPLE.conversations`
+already resolved to the schema `example` everywhere the name was interpolated
+*without* a guard - which is why the 1:1 chat worked. The group path was the
+only place with a hard check, so it was the only place that failed.
 
-Operator mode widens the blast radius of a prompt injection: by default a
-hostile instruction in content the agent reads can at most run commands as
-the install's Unix user; in operator mode it can additionally use whatever
-the operator has granted. That is acceptable when the grants are narrow and
-the agent's inputs are the operator's own. It is not acceptable if the
-agent reads attacker-controlled content. The decision belongs to the
-operator of the install, per install.
+And the display form must not be folded: `list_conversations` filters
+`c.agent_name = %s` with the config's own spelling, so the column has to keep
+`EXAMPLE` exactly.
 
-## Gates
+## The fix
 
-- `python -m pytest tests/ -q` — **222 passed, 9 skipped**
-- `scripts/check_no_secrets.py` — clean (working tree, full history, commit messages)
+* new `app/agent/names.py` - `canonical_agent_name()` lower-cases, then
+  validates against the same `^[a-z][a-z0-9_]{0,39}$` pattern. Injection
+  attempts are still refused (there is a test for it).
+* `app/models/group.py::ensure_agent_conversation()` - the schema is the
+  canonical form; the column keeps the display form.
+* `app/agent/reverie.py::activity_count()` - the same guard, which was
+  waiting to kill the nightly turn the moment `reverie.enabled` was turned on.
 
-## Validation
+No data migration: the schema is already `example`, and the existing 1:1 rows
+keep the display name, so they still match.
 
-Changes 1 and 2 were each deployed to the production install and verified
-there, in the production venv with the production config and the live
-endpoint — the exact production failure was reproduced against the old path
-and survived on the new one. Change 3 is off by default and was not enabled
-anywhere by this merge.
+## Tests
+
+`tests/test_agent_name.py` (new): the fold; the refusal of
+injection attempts; that the INSERT names the lower-case schema while the
+column keeps the display form; that a mention of an upper-case agent is
+matched, and that `@example` resolves to that same agent rather than to a
+second one; and that `reverie.activity_count()` uses the schema form for the
+upper-case display name. That half of the fix was untested at first -
+reverting `reverie.py` left the whole suite green while the nightly turn
+would have died again on an install with an upper-case display name.
+
+Full suite: **235 passed, 9 skipped**.
+
+## Live verification (a real install, before this pull request)
+
+The fix was applied on that install on a local branch first, then:
+
+* the service restarted cleanly (`bootstrap_registry: 1 agent(s) loaded`);
+* a real `@EXAMPLE` message through the real HTTP path produced `agent_start`
+  -> the agent's reply in the group transcript -> `agent_done`;
+* the row that could not exist before now does - a group conversation row in
+  the agent's own schema, with the display form in the `agent_name` column
+  and `is_group` true.
+
+## Not included (a separate change)
+
+The tidier end state is a lower-case agent *id* (`example`) with the display
+name (`EXAMPLE`) in `pie/<agent>/identity/IDENTITY.md`. That is a migration on
+an existing install - the pie directory, `app.agents`, the roster rows and the
+schema name - not a code fix, so it is deliberately not in this pull request.
+A boot-time warning for a non-canonical name would be a sensible follow-up.
+
+## A note on the history
+
+This branch was rewritten into a single commit. The original commit carried
+one live install's agent name, its pie directory, a live group conversation
+title and a live conversation id - in the code comments, in the tests and in
+the commit message. This repository is public, so those are customer-specific
+details and they must not ship. The examples are now synthetic placeholders
+(`EXAMPLE`, `example`, `pie/<AGENT>/`), and the commit that introduced them
+is no longer in this branch's history.
+
+---
+
+*Note on the examples: the agent name, the pie directory and the group title
+used in this description are synthetic placeholders. No install-specific name,
+identifier or title is included in this pull request.*
