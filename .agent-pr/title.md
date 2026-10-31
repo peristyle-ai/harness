@@ -1,1 +1,1 @@
-fix(agent): nudge a reasoning-only response instead of ending the turn
+fix(ui): a failed stream must say why, not "streamingError is not defined"

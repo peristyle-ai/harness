@@ -1040,6 +1040,18 @@
       const decoder = new TextDecoder();
       let buffer = '';
       let finalEvent = null;
+      // The server's error event, when one arrives.
+      //
+      // It is DECLARED here, and that is the whole point of the line:
+      // the "no final event" path below READS it, and an identifier
+      // that was never declared is a ReferenceError in JavaScript, not
+      // an undefined value. So when a stream ended without a final
+      // event and without an error event -- the case this variable
+      // exists for -- the read threw "streamingError is not defined",
+      // which replaced the real message ("stream ended without a
+      // final event") and left the operator staring at a JavaScript
+      // error instead of the reason the turn failed.
+      let streamingError = null;
       while (true) {
         const {done, value} = await reader.read();
         if (done) break;
