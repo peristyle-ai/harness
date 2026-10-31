@@ -97,6 +97,30 @@ _INTENT_RE = re.compile(
 _NUDGE_INTENT_MESSAGE = (
     "You described an action ('resending', 'sending', 'let me check', etc.) but you did not issue a `tool_use` content block in this turn. Describing the plan is not the same as executing it. The user (and the harness) cannot see your intent - they can only see the `tool_use` blocks. If you want to send the email, you must call the relevant tool (exec_bash with the mail-send script, attach_file with the PDF, etc.) as a `tool_use` block. Try again - this time, actually call the tool.",
 )
+# Phase 15.11 (2026-10-31): the nudge for a REASONING-ONLY response.
+# The model returned a thinking block and nothing else -- no text, no
+# tool_use -- so the minimax adapter (which drops thinking blocks from
+# `.text`) left the harness with no answer at all. Before this, the turn
+# simply ENDED there, with the task half done and hundreds of iterations
+# unused. Incident: a production install, 2026-10-31, where a turn had
+# run 30 real tool iterations of 500 and then returned a reasoning-only
+# response.
+#
+# The nudge says what happened and hands the model its own last reasoning
+# back, so it resumes the thread instead of starting over.
+def _no_answer_nudge(thinking: str) -> str:
+    return (
+        "Your last response was reasoning only: it carried neither "
+        "visible text nor a `tool_use` block, so the harness saw no answer "
+        "and was about to end the turn. Your work is NOT finished unless "
+        "you say so in plain text. Continue now -- issue the next "
+        "`tool_use` block, or state plainly what is done and what "
+        "remains.\n\n"
+        "This is where you left off (your own last reasoning):\n"
+        + thinking
+    )
+
+
 _NUDGE_MESSAGE = (
     "Your last response did not include a structured `tool_use` content "
     "block, but it described a tool call in prose (or hallucinated a "
@@ -1176,6 +1200,46 @@ class AgentLoop:
                         # iteration-cap hit that never happened. Do NOT
                         # discard the model's last output: use it, or say
                         # plainly that the turn ended without an answer.
+                        #
+                        # Phase 15.11 (2026-10-31): a REASONING-ONLY
+                        # response is not a dead end. The model may have
+                        # thought out loud and stopped mid-task -- on
+                        # a production install a turn that had run 30 real
+                        # tool iterations (of 500) ended exactly there, with
+                        # the work half done. So nudge it, under the same
+                        # _MAX_NUDGES cap the narrate path uses, and carry
+                        # its own last reasoning back to it so it resumes
+                        # the thread instead of starting over.
+                        #
+                        # An adapter that returns NOTHING at all (no
+                        # thinking either) is a different failure -- a
+                        # broken transport -- and still ends the turn
+                        # immediately.
+                        thinking = self._thinking_text(response)
+                        nudges_so_far = sum(
+                            1 for it in emission_iters if it.get("_nudged")
+                        )
+                        if (
+                            thinking
+                            and nudges_so_far < _MAX_NUDGES
+                            and tool_iters < max_iters
+                        ):
+                            iter_record["_nudged"] = True
+                            emission_iters.append(iter_record)
+                            messages.append(Message(
+                                role="user",
+                                content=_no_answer_nudge(thinking),
+                            ))
+                            log.warning(
+                                "agent_loop: the model returned a "
+                                "reasoning-only response (no text, no tool "
+                                "call) after %d/%d iterations; nudging for "
+                                "retry",
+                                llm_calls, max_iters,
+                            )
+                            yield {"type": "nudge", "iter": tool_iters}
+                            tool_iters += 1
+                            continue
                         end_reason = _END_NO_ANSWER
                         final_text = self._no_answer_text(
                             response, iterations_used=llm_calls,
