@@ -17,6 +17,17 @@ cd "$(dirname "$0")"
 # fallback silently took over and the service bound 0.0.0.0:5010 on
 # every install -- including one whose config says 127.0.0.1:5010, i.e.
 # a loopback-only install that ended up listening on every interface.
+#
+# The fallback is LOOPBACK, and that is deliberate. A wildcard bind is
+# a decision an operator makes on purpose -- in config.yaml, or through
+# HARNESS_BIND -- and it is never what you get by accident. A harness
+# that listens on every interface is a plain-HTTP admin surface
+# reachable from the LAN, and the reverse proxy in front of it is the
+# thing that is supposed to decide who may reach it at all.
+#
+# This is pinned by a test (tests/test_bind_default.py), because a
+# default that is only ever right by hand is a default that will be
+# wrong again.
 BIND="${HARNESS_BIND:-}"
 if [ -z "$BIND" ] && [ -f config.yaml ]; then
     BIND="$(python3 -c "
@@ -31,7 +42,7 @@ except Exception:
     pass
 " 2>/dev/null || true)"
 fi
-[ -n "$BIND" ] || BIND="0.0.0.0:5010"
+[ -n "$BIND" ] || BIND="127.0.0.1:5010"
 
 # --- log to BOTH the journal and a readable file (2026-10-21) ---
 # gunicorn's --access/--error-logfile are "-" (stdout/stderr), which systemd

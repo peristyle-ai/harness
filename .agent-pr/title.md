@@ -1,1 +1,1 @@
-check(refs): the identifier rules must hold on every public branch, not just the tree
+fix(bind): the default bind address is loopback, not a wildcard
