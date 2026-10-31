@@ -102,8 +102,9 @@ _NUDGE_INTENT_MESSAGE = (
 # tool_use -- so the minimax adapter (which drops thinking blocks from
 # `.text`) left the harness with no answer at all. Before this, the turn
 # simply ENDED there, with the task half done and hundreds of iterations
-# unused. Incident: sysadmin@bc250, 2026-10-31, a turn that had run 30
-# real tool iterations of 500 and then returned a reasoning-only response.
+# unused. Incident: a production install, 2026-10-31, where a turn had
+# run 30 real tool iterations of 500 and then returned a reasoning-only
+# response.
 #
 # The nudge says what happened and hands the model its own last reasoning
 # back, so it resumes the thread instead of starting over.
@@ -1203,9 +1204,9 @@ class AgentLoop:
                         # Phase 15.11 (2026-10-31): a REASONING-ONLY
                         # response is not a dead end. The model may have
                         # thought out loud and stopped mid-task -- on
-                        # sysadmin@bc250 a turn that had run 30 real tool
-                        # iterations (of 500) ended exactly there, with the
-                        # work half done. So nudge it, under the same
+                        # a production install a turn that had run 30 real
+                        # tool iterations (of 500) ended exactly there, with
+                        # the work half done. So nudge it, under the same
                         # _MAX_NUDGES cap the narrate path uses, and carry
                         # its own last reasoning back to it so it resumes
                         # the thread instead of starting over.

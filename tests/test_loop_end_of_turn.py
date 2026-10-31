@@ -254,7 +254,7 @@ def test_fabrication_detector_still_matches_the_old_wording():
 def test_reasoning_only_response_is_nudged_and_the_turn_continues():
     """The regression: a turn that had run 30 real tool iterations of 500
     ended because the model returned a reasoning-only response, with the
-    task half done (sysadmin@bc250, 2026-10-31). The turn must now be
+    task half done (a production install, 2026-10-31). The turn must now be
     nudged and carry on."""
     final_text, _ = _run_turn(
         [_thinking_only_response("I was mid-edit."), _final_answer_response("DONE.")],
