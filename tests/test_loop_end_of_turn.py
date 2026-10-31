@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.agent.llm.base import LLMResponse, Message, ToolCall
-from app.agent.loop import AgentLoop
+from app.agent.loop import _MAX_NUDGES, AgentLoop
 
 # The wording the loop used for BOTH cases before 2026-10-27.
 OLD_CANNED = "I wasn't able to finish reasoning within the allowed"
@@ -141,6 +141,11 @@ def _tool_call_response(name: str = "no_such_tool"):
     )
 
 
+def _final_answer_response(text: str = "DONE."):
+    """A normal answer: text, no tool call."""
+    return LLMResponse(text=text, tool_calls=[], finish_reason="stop")
+
+
 def _thinking_only_response(thinking: str = "The pull request is open."):
     """What the minimax adapter produces for a reasoning-only response:
     no text, no tool call, the reasoning in `thinking_blocks`."""
@@ -182,7 +187,10 @@ def test_no_answer_is_not_reported_as_a_cap_hit():
 
 def test_no_answer_reports_the_iterations_actually_used():
     final_text, _ = _run_turn([_thinking_only_response()], max_iters=500)
-    assert "1 of the 500 allowed tool iterations" in final_text, final_text
+    # Phase 15.11: a reasoning-only response is nudged first (up to
+    # _MAX_NUDGES times), so by the time the turn gives up it has used
+    # 1 + the nudges, not 1.
+    assert f"{1 + _MAX_NUDGES} of the 500 allowed tool iterations" in final_text, final_text
 
 
 def test_no_answer_keeps_the_models_last_output():
@@ -238,3 +246,54 @@ def test_fabrication_detector_still_matches_the_old_wording():
     old = ("I wasn't able to finish reasoning within the allowed "
            "40 tool iterations.")
     assert _detect_fabrication(old, 500, 2) == (40, 500, 2)
+
+
+# --- Phase 15.11 (2026-10-31): a reasoning-only response is nudged, not fatal
+
+
+def test_reasoning_only_response_is_nudged_and_the_turn_continues():
+    """The regression: a turn that had run 30 real tool iterations of 500
+    ended because the model returned a reasoning-only response, with the
+    task half done (sysadmin@bc250, 2026-10-31). The turn must now be
+    nudged and carry on."""
+    final_text, _ = _run_turn(
+        [_thinking_only_response("I was mid-edit."), _final_answer_response("DONE.")],
+        max_iters=500,
+    )
+    assert "ended this turn without an answer" not in final_text, final_text
+    assert final_text.strip().startswith("DONE."), final_text
+
+
+def test_the_nudge_carries_the_models_own_last_reasoning_back():
+    """The model must be able to pick the thread up, not start over."""
+    thinking = "Line 43 is the replacement assertion; let me check the bytes."
+    seen = {}
+
+    class _RecordingAdapter(FakeAdapter):
+        def complete(self, messages, tools=None, **kwargs):
+            seen["messages"] = list(messages)
+            return super().complete(messages, tools=tools, **kwargs)
+
+    memory = FakeMemory()
+    adapter = _RecordingAdapter(
+        [_thinking_only_response(thinking), _final_answer_response("DONE.")]
+    )
+    loop = AgentLoop(
+        adapter=adapter, memory=memory, bootstrap=None, config=_Config(),
+    )
+    loop.config.agent.max_tool_iterations = 500
+    loop._compose_messages = lambda *a, **k: [
+        Message(role="system", content="SYSTEM"),
+        Message(role="user", content="the question"),
+    ]
+    list(loop.handle_chat_streaming("the question", agent_name="testbot", user_id=1))
+    nudges = [m for m in seen.get("messages", [])
+              if isinstance(m.content, str) and "reasoning only" in m.content]
+    assert nudges, "no nudge message was sent to the model"
+    assert thinking in nudges[-1].content, nudges[-1].content
+
+
+def test_the_nudge_cannot_loop_forever():
+    """A model that only ever reasons must still end the turn."""
+    final_text, _ = _run_turn([_thinking_only_response()], max_iters=500)
+    assert "ended this turn without an answer" in final_text, final_text
