@@ -73,7 +73,7 @@ identity_name() {
     [ -f "$file" ] || continue
     local name
     name="$(grep -m1 -iE '^[[:space:]]*[-*]?[[:space:]]*\**name\**[[:space:]]*:' "$file" 2>/dev/null \
-            | sed -E 's/^[^:]*:[[:space:]]*//; s/\*\*//g; s/[[:space:]]+$//' || true)"
+            | sed -E 's/^[^:]*:[[:space:]]*//; s/^[[:space:]]*(\*\*)?[[:space:]]*//; s/(\*\*)?[[:space:]]*$//' || true)"
     if [ -n "$name" ]; then printf '%s' "$name"; return 0; fi
   done
   return 1

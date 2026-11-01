@@ -22,14 +22,19 @@ NO_REPLY = "peristyle-ai@users.noreply.github.com"
 
 
 def run_signature(install_root: Path, env: dict[str, str]) -> str:
-    """Run the signature resolver and return its output."""
+    """Run the signature resolver and return its output.
+
+    Only the trailing newline is stripped.  A leading space would be a
+    bug in the name extraction, and ``strip()`` would hide it -- which it
+    did once: the resolver returned " Durthu" and every test here passed.
+    """
     full = {**os.environ, **env}
     result = subprocess.run(
         ["bash", str(SIGNATURE), "--install-root", str(install_root)],
         capture_output=True, text=True, env=full,
     )
     assert result.returncode == 0, result.stderr
-    return result.stdout.strip()
+    return result.stdout.rstrip("\n")
 
 
 def write_identity(install_root: Path, handle: str, name: str) -> None:
