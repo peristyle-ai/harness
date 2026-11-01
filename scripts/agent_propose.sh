@@ -157,7 +157,7 @@ PY
 
 $BODY
 
-Proposed by an agent. The pull request is opened by the agent-pr
+Proposed by: $SIGN_NAME. The pull request is opened by the agent-pr
 workflow, so it waits for a code owner to approve it."
 
   git push -q -u "$REMOTE" "agent/$SLUG"

@@ -1,1 +1,1 @@
-ci(repo): agents sign their commits with their own names
+fix(agent): the attribution has to survive onto main, not just onto the branch
