@@ -347,20 +347,42 @@
     div.innerHTML =
       '<div class="gmsg-meta">' + agentIconHTML(agent || '?', 18) +
       '<span class="gmsg-name">' + escapeHtml(agent || 'agent') + '</span></div>' +
-      '<div class="gmsg-body"></div>' +
+      '<div class="gmsg-body">…</div>' +
       '<details class="trace"><summary class="trace-summary">working...</summary>' +
-      '<ol class="trace-list"></ol></details>';
+      '<ol class="trace-list"></ol></details>' +
+      // The thought stream, exactly as the 1:1 chat has it: a
+      // collapsible section of the model's per-iteration narration.
+      // It is LIVE ONLY (not a turn) and it starts CLOSED.
+      '<details class="thoughts"><summary class="thought-summary">thought stream</summary>' +
+      '<div class="thought-lines"></div></details>';
     messagesEl.appendChild(div);
     liveBubbles[agent] = div;
     scrollToBottom();
     return div;
   }
 
-  function finalizeBubble(agent, text) {
+  function finalizeBubble(agent, text, resp) {
     const div = liveBubbles[agent];
     if (!div) return;
     const body = div.querySelector('.gmsg-body');
     if (body) body.innerHTML = renderMarkdown(text || '(no response)');
+    // The turn is over: the trace collapses into a static summary, the
+    // same shape the 1:1 chat uses. Both sections stay CLOSED -- the
+    // operator asked for the thought stream and the tool-call summary
+    // to be collapsed by default.
+    const list = div.querySelector('.trace-list');
+    const traceSummary = div.querySelector('.trace-summary');
+    const traceEl = div.querySelector('.trace');
+    if (list && traceSummary) {
+      const tools = list.querySelectorAll('li.trace-item:not(.nudge)').length;
+      const iters = (resp && resp.tool_iterations) || 0;
+      const lat = (resp && resp.latency_ms) ? (resp.latency_ms / 1000).toFixed(1) : '';
+      traceSummary.textContent = iters + ' iter · ' + tools + ' tool call' +
+        (tools === 1 ? '' : 's') + (lat ? ' · ' + lat + 's' : '');
+    }
+    if (traceEl) traceEl.removeAttribute('open');
+    const thoughtsEl = div.querySelector('.thoughts');
+    if (thoughtsEl) thoughtsEl.removeAttribute('open');
     div.classList.remove('live');
     // The entry is KEPT (not deleted) until the persisted transcript
     // row arrives -- that row replaces this bubble (the server sends
@@ -481,6 +503,14 @@
           const live = liveBubbles[m.author_name];
           const bubble = agentBubble(m.author_name, m.content, m.created_at);
           if (live && live.parentNode) {
+            // The trace and the thought stream exist only in the live
+            // DOM, so they are CARRIED OVER to the persisted bubble.
+            // Replacing the bubble wholesale threw the tool-call
+            // summary away at the end of every turn.
+            ['trace', 'thoughts'].forEach(function (cls) {
+              const src = live.querySelector(':scope > .' + cls);
+              if (src) bubble.appendChild(src);
+            });
             live.parentNode.replaceChild(bubble, live);
             delete liveBubbles[m.author_name];
           } else {
@@ -495,9 +525,18 @@
         break;
       }
       case 'iter_start': {
+        // The marker goes into the THOUGHT section, not into the body:
+        // the body is the answer (operator: "i don't want the thinking
+        // ... (iter 10) to appear" in the answer slot).
         const div = liveBubbleFor(agent);
-        const body = div.querySelector('.gmsg-body');
-        if (body) body.textContent = '⏳ thinking…';
+        const lines = div.querySelector('.thought-lines');
+        if (lines) {
+          const marker = document.createElement('div');
+          marker.className = 'thought-line marker';
+          marker.textContent = 'thinking… (iter ' +
+            (ev.iter === undefined ? '?' : ev.iter) + ')';
+          lines.appendChild(marker);
+        }
         break;
       }
       case 'delta': {
@@ -514,6 +553,25 @@
         if (body) { body.dataset.raw = ev.text || ''; body.textContent = ev.text || ''; }
         break;
       }
+      case 'thought': {
+        // The model's one-line thought for this iteration. Same event
+        // the 1:1 chat renders; the group client used to drop it.
+        const div = liveBubbleFor(agent);
+        const lines = div.querySelector('.thought-lines');
+        const summary = div.querySelector('.thought-summary');
+        if (lines) {
+          const line = document.createElement('div');
+          line.className = 'thought-line';
+          line.textContent = ev.text || '';
+          lines.appendChild(line);
+        }
+        if (summary) {
+          const n = lines ? lines.querySelectorAll('.thought-line:not(.marker)').length : 0;
+          summary.textContent = 'thought stream · ' + n;
+        }
+        scrollToBottom();
+        break;
+      }
       case 'tool_start': {
         const div = liveBubbleFor(agent);
         const list = div.querySelector('.trace-list');
@@ -523,9 +581,17 @@
           const argsStr = ev.args ? JSON.stringify(ev.args) : '';
           li.textContent = '🔧 ' + ev.name + '(' + (argsStr.length > 80 ? argsStr.slice(0, 80) + '…' : argsStr) + ')';
           li.className = 'trace-item pending';
+          // The tool name and its args ride along on the element, so
+          // tool_end can finish THIS line instead of appending a
+          // second one.
+          li.dataset.tool = ev.name || '';
+          li.dataset.args = argsStr;
           list.appendChild(li);
         }
-        if (summary) summary.textContent = 'working…';
+        if (summary) {
+          const n = list ? list.querySelectorAll('li.trace-item').length : 0;
+          summary.textContent = n + ' tool call' + (n === 1 ? '' : 's') + '…';
+        }
         scrollToBottom();
         break;
       }
@@ -534,14 +600,49 @@
         const list = div.querySelector('.trace-list');
         const summary = div.querySelector('.trace-summary');
         if (list) {
-          const li = document.createElement('li');
-          li.textContent = '✓ ' + ev.name;
-          li.className = 'trace-item ' + (ev.ok ? 'ok' : 'err');
-          list.appendChild(li);
+          // ONE line per tool call: finish the pending line that
+          // tool_start wrote, instead of appending a second one (the
+          // 1:1 client does exactly this). Appending made every tool
+          // call appear TWICE in the group chat.
+          const pendings = list.querySelectorAll(
+            'li.trace-item.pending[data-tool="' + CSS.escape(ev.name || '') + '"]');
+          const pending = pendings.length ? pendings[pendings.length - 1] : null;
+          const args = (pending && pending.dataset.args) || '';
+          const shortArgs = args.length > 80 ? args.slice(0, 80) + '…' : args;
+          if (pending) {
+            pending.classList.remove('pending');
+            pending.classList.add(ev.ok ? 'ok' : 'err');
+            pending.textContent = (ev.ok ? '✓ ' : '✗ ') + ev.name +
+              '(' + shortArgs + ')';
+            if (!ev.ok && ev.result_preview) pending.title = ev.result_preview;
+          } else {
+            const li = document.createElement('li');
+            li.textContent = (ev.ok ? '✓ ' : '✗ ') + ev.name;
+            li.className = 'trace-item ' + (ev.ok ? 'ok' : 'err');
+            list.appendChild(li);
+          }
         }
         if (summary) {
-          summary.textContent = ((Date.now() - sendT0) / 1000).toFixed(1) + 's';
+          const n = list ? list.querySelectorAll('li.trace-item:not(.nudge)').length : 0;
+          summary.textContent = n + ' tool call' + (n === 1 ? '' : 's') +
+            ' · ' + ((Date.now() - sendT0) / 1000).toFixed(1) + 's';
         }
+        scrollToBottom();
+        break;
+      }
+      case 'nudge': {
+        // The model narrated a tool call instead of making one. The
+        // 1:1 chat shows it in the trace; the group chat used to drop
+        // it, so the operator saw nothing at all.
+        const div = liveBubbleFor(agent);
+        const list = div.querySelector('.trace-list');
+        if (list) {
+          const li = document.createElement('li');
+          li.textContent = '⚠️ model narrated a tool call — nudging for retry';
+          li.className = 'trace-item nudge';
+          list.appendChild(li);
+        }
+        scrollToBottom();
         break;
       }
       case 'notice': {
@@ -551,7 +652,7 @@
       }
       case 'final': {
         const resp = ev.response || {};
-        finalizeBubble(agent, resp.assistant || '');
+        finalizeBubble(agent, resp.assistant || '', resp);
         break;
       }
       case 'agent_done': {

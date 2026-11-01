@@ -1,49 +1,81 @@
-An adapter holds one `httpx.Client`, with one connection pool. On most
-installs **every agent shared that one client** — the registry was
-populated only for the agents listed in `llm.per_agent`, which was added
-for a per-agent *model* test and never for isolation.
+## What the operator saw
 
-**A shared client is a shared failure domain.** When the upstream resets
-that connection, every stream in flight on it dies at the same moment. On
-2026-11-01 two agents on one install, sharing one client, both lost their
-turn on the same upstream reset — three milliseconds apart.
+In the group chat (the peristyle session's group page):
 
-## What changes
+- **no thought stream at all**
+- **every tool call twice**
+- **poor tool-call formatting**
+- the trace **disappeared** when the turn ended
 
-- **Every agent gets its own adapter** — and therefore its own client,
-  its own pool and its own connection. An upstream reset kills one
-  agent's turn, not all of them.
-- **`llm.per_agent` becomes a partial override.** It used to be a
-  complete `llm` block — every field repeated, `api_key` included — so
-  getting an isolated client meant copying the key once per agent, and
-  most installs just shared instead. Now an entry names only what
-  changes and inherits the rest:
+## Why
 
-  ```yaml
-  llm:
-    per_agent:
-      example:
-        model: some-other-model
-  ```
+The server was never the problem. `app/agent/group_chat.py` forwards EVERY
+event the agent loop emits - `iter_start`, `delta`, `iter_text`, `thought`,
+`tool_start`, `tool_end`, `nudge`, `final` - each tagged with the agent it
+belongs to. The data reached the browser; the group chat client threw it
+away. `app/static/group.js` had never been updated for the streaming work
+the 1:1 chat got on 2026-10-25.
 
-  No duplication, and no key copied per agent.
+Five concrete gaps:
 
-- **A full block still loads unchanged.** Merging a complete block over
-  the global one yields the same values, so existing configs keep
-  working untouched.
+1. **No `case 'thought':`.** The client's event switch had no branch for
+   the thought event, so the model's per-iteration narration was invisible,
+   and the live bubble had nowhere to render it.
+2. **`tool_end` appended a second line.** `tool_start` wrote a
+   "tool call (args)" line and `tool_end` appended a *separate* "done"
+   line instead of finishing the first one. The 1:1 client updates the
+   pending line in place; the group client did not, so every tool call
+   appeared twice.
+3. **The styles were scoped to the wrong bubble class.** Every trace and
+   thought rule in `app.css` was scoped to `.msg` (the 1:1 bubble). The
+   group bubble is `.gmsg`, so the group's `<details class="trace">`
+   rendered with **no styling at all** - no muted summary, no coloured
+   items, no scroll cap. That is what "poor formatting" was.
+4. **"thinking..." in the answer slot.** The group's `iter_start` branch
+   overwrote the answer body with a placeholder. The operator had already
+   rejected exactly that in the 1:1 chat: the body is for the answer, the
+   marker belongs in the thought section.
+5. **The trace was thrown away at the end of the turn.** The persisted
+   transcript row replaces the live bubble wholesale, and the persisted
+   bubble carried no trace - so the tool-call summary vanished with the
+   turn it described.
 
-The cost is one socket and a pool per agent.
+## The fix
+
+`app/static/group.js`:
+
+- the live bubble gains a `<details class="thoughts">` section, exactly as
+  the 1:1 chat has it - live only, not a turn, and **collapsed by
+  default**
+- a `thought` branch renders the narration, and the iteration marker moves
+  out of the answer body into the thought section
+- `tool_start` records the tool name and its args on the line;
+  `tool_end` finds that line and finishes it in place - **one line per
+  tool call**, `done` or `failed`, with the error preview on the title
+- a `nudge` branch shows the "the model narrated a tool call" signal, as
+  the 1:1 chat does
+- the trace and the thought stream are carried over to the persisted
+  transcript bubble, so the tool-call summary survives the turn
+- when the turn ends, the trace collapses into the same static summary
+  the 1:1 chat uses ("N iter - M tool calls - Zs")
+
+`app/static/app.css`: every trace and thought rule now covers both bubble
+classes (`.msg` and `.gmsg`).
 
 ## Tests
 
-- two agents on one install get two different clients and two different
-  pools — with or without a config entry;
-- the partial override merges as documented, and does not mutate the
-  global block;
-- a full block still builds.
+`tests/test_group_chat_stream_parity.py` (new, 11 tests). They were seen
+**failing on the old code** - 8 failed, 2 passed - and pass after the fix.
 
-## For the reviewer
+Two of them pass on the old code on purpose: one pins that the server
+already forwards the thought event (so the gap is the client, and nobody
+"fixes" the forwarding instead), and one pins that the group's sections
+start collapsed.
 
-The change is generic and names no install. The installer drops
-`per_agent` for a single-agent install, which is still correct — and
-now for a different reason: every agent gets its own client either way.
+The last one parses `group.js` with node, when node is installed, and is
+skipped when it is not - a syntax error in that file would kill the whole
+group chat.
+
+The server-side test is a behavioural one: it runs `run_group_message`
+with a fake loop and asserts the thought event comes through tagged with
+its agent.
