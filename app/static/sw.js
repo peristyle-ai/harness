@@ -27,7 +27,11 @@
 // second one never reaches an installed PWA. A change to sw.js makes the
 // browser re-precache the current bundle, so the two bumps differ
 // whichever order they are merged in.
-const CACHE_NAME = 'harness-v13';
+// 2026-11-01 (bump for the live status line): the chat bundle changed
+// again -- the model's latest thought now shows at the top of the bubble.
+// Same rule: the name moves to harness-v14, so it differs from every
+// other open change that touches the bundle.
+const CACHE_NAME = 'harness-v14';
 const PRECACHE = [
   '/',
   '/static/app.css',

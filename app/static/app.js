@@ -948,6 +948,12 @@
       const liveBody = document.createElement('div');
       liveBody.className = 'live-body';
       liveBody.textContent = '…';
+      // The LIVE STATUS LINE: the model's latest thought, at the top of
+      // the bubble (2026-11-01, per the operator). The thought stream is
+      // collapsed by default, so this one line is what says what the
+      // agent is doing RIGHT NOW.
+      const liveStatus = document.createElement('div');
+      liveStatus.className = 'live-status';
       // The per-iteration thought trail (2026-10-25, per the operator): the model's
       // interim narration, one line per iteration. It is a COLLAPSIBLE
       // section (a <details>, exactly like the tool-call summary) and it
@@ -980,6 +986,7 @@
       const liveMeta = document.createElement('div');
       liveMeta.className = 'meta';
       liveMeta.textContent = 'assistant';
+      liveDiv.appendChild(liveStatus);
       liveDiv.appendChild(liveBody);
       liveDiv.appendChild(liveTrace);
       liveDiv.appendChild(liveThoughts);
@@ -1080,6 +1087,10 @@
             line.className = 'thought-line';
             line.textContent = ev.text || '';
             liveThoughtLines.appendChild(line);
+            // ... and the LATEST one also goes to the status line at the
+            // top of the bubble, so the working state is visible
+            // without opening the (collapsed) thought stream.
+            liveStatus.textContent = ev.text || '';
             thoughtCount += 1;
             liveThoughtsSummary.textContent = 'thought stream · ' + thoughtCount;
             requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
@@ -1175,6 +1186,9 @@
       // the plain textContent (used during typing to avoid markdown
       // re-render flicker on every chunk) for the rendered HTML.
       liveBody.innerHTML = renderMarkdown(finalText);
+      // The answer has arrived; the "what is it doing right now" line
+      // goes with it.
+      liveStatus.remove();
       // Phase 15: render the final attachment list. The server
       // includes this in the `attachments` key on the final event
       // (Phase 15 addition). Prefer the server list over the

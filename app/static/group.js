@@ -332,7 +332,8 @@
       '<div class="gmsg-meta">' + agentIconHTML(agent || '?', 18) +
       '<span class="gmsg-name">' + escapeHtml(agent ? labelFor(agent) : 'agent') + '</span>' +
       (iso ? ' · ' + escapeHtml(fmtTime(iso)) : '') + '</div>' +
-      '<div class="gmsg-body">' + renderMarkdown(text || '') + '</div>';
+      '<div class="gmsg-body"><div class="gmsg-answer">' +
+      renderMarkdown(text || '') + '</div></div>';
     return div;
   }
 
@@ -347,7 +348,13 @@
     div.innerHTML =
       '<div class="gmsg-meta">' + agentIconHTML(agent || '?', 18) +
       '<span class="gmsg-name">' + escapeHtml(agent || 'agent') + '</span></div>' +
-      '<div class="gmsg-body">…</div>' +
+      // The body carries TWO parts: the live status line (the model's
+      // latest thought, at the top) and the answer. They are separate
+      // elements, so a thought never overwrites the answer and the
+      // answer never wipes the thought.
+      '<div class="gmsg-body">' +
+      '<div class="gmsg-status"></div>' +
+      '<div class="gmsg-answer">…</div></div>' +
       '<details class="trace"><summary class="trace-summary">working...</summary>' +
       '<ol class="trace-list"></ol></details>' +
       // The thought stream, exactly as the 1:1 chat has it: a
@@ -364,8 +371,12 @@
   function finalizeBubble(agent, text, resp) {
     const div = liveBubbles[agent];
     if (!div) return;
-    const body = div.querySelector('.gmsg-body');
-    if (body) body.innerHTML = renderMarkdown(text || '(no response)');
+    const answer = div.querySelector('.gmsg-answer');
+    if (answer) answer.innerHTML = renderMarkdown(text || '(no response)');
+    // The status line was the "what is it doing RIGHT NOW" line. The
+    // answer has arrived, so it goes.
+    const status = div.querySelector('.gmsg-status');
+    if (status) status.remove();
     // The turn is over: the trace collapses into a static summary, the
     // same shape the 1:1 chat uses. Both sections stay CLOSED -- the
     // operator asked for the thought stream and the tool-call summary
@@ -541,22 +552,29 @@
       }
       case 'delta': {
         const div = liveBubbleFor(agent);
-        const body = div.querySelector('.gmsg-body');
-        if (body) body.textContent = (body.dataset.raw || '') + (ev.text || '');
-        const raw = (body && body.dataset.raw ? body.dataset.raw : '') + (ev.text || '');
-        if (body) body.dataset.raw = raw;
+        const answer = div.querySelector('.gmsg-answer');
+        if (answer) answer.textContent = (answer.dataset.raw || '') + (ev.text || '');
+        const raw = (answer && answer.dataset.raw ? answer.dataset.raw : '') + (ev.text || '');
+        if (answer) answer.dataset.raw = raw;
         break;
       }
       case 'iter_text': {
         const div = liveBubbleFor(agent);
-        const body = div.querySelector('.gmsg-body');
-        if (body) { body.dataset.raw = ev.text || ''; body.textContent = ev.text || ''; }
+        const answer = div.querySelector('.gmsg-answer');
+        if (answer) { answer.dataset.raw = ev.text || ''; answer.textContent = ev.text || ''; }
         break;
       }
       case 'thought': {
         // The model's one-line thought for this iteration. Same event
         // the 1:1 chat renders; the group client used to drop it.
         const div = liveBubbleFor(agent);
+        // The LIVE STATUS LINE: the model's latest thought, at the top
+        // of the bubble. The operator asked for it (2026-11-01): the
+        // thought stream is collapsed by default, so the one line that
+        // says what the agent is doing RIGHT NOW has to be visible
+        // without opening anything.
+        const status = div.querySelector('.gmsg-status');
+        if (status) status.textContent = ev.text || '';
         const lines = div.querySelector('.thought-lines');
         const summary = div.querySelector('.thought-summary');
         if (lines) {
@@ -664,8 +682,10 @@
       case 'error': {
         const div = liveBubbles[agent];
         if (div) {
-          const body = div.querySelector('.gmsg-body');
-          if (body) body.innerHTML = '<span class="gmsg-error">⚠️ ' + escapeHtml(ev.message || 'error') + '</span>';
+          const answer = div.querySelector('.gmsg-answer');
+          const status = div.querySelector('.gmsg-status');
+          if (status) status.remove();
+          if (answer) answer.innerHTML = '<span class="gmsg-error">⚠️ ' + escapeHtml(ev.message || 'error') + '</span>';
           div.classList.remove('live');
           delete liveBubbles[agent];
         } else {
