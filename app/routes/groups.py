@@ -280,7 +280,16 @@ def group_set_agents(group_id: UUID):
     if not isinstance(agent_names, list):
         return jsonify({"error": "agent_names must be a list"}), 400
     installed = _installed_agents()
-    names = [str(a) for a in agent_names if str(a) in installed]
+    # The roster stores the KEY. A client may send the display name
+    # (that is what the chat shows), so resolve it -- otherwise the
+    # agent is silently dropped from the roster.
+    from app.routes.agent_lookup import resolve_agent
+    names = []
+    for a in agent_names:
+        text = str(a)
+        key = resolve_agent(text) or (text if text in installed else None)
+        if key and key not in names:
+            names.append(key)
     store = _store()
     if store.get(str(group_id)) is None:
         return jsonify({"error": "group not found"}), 404

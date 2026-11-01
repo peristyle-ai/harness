@@ -133,6 +133,23 @@ class TestTheApiCanonicalisation(unittest.TestCase):
         self.assertIsNone(r.get_json()["original"])
 
 
+class TestTheGroupRoster(unittest.TestCase):
+    """The roster stores the KEY; a client may send the display name."""
+
+    def setUp(self):
+        from app.routes.groups import bp as groups_bp
+
+        self.app = _make_app()
+        self.app.register_blueprint(groups_bp)
+        self.client = self.app.test_client()
+
+    def test_the_roster_endpoint_carries_the_display_names(self):
+        from app.routes.groups import _agent_display_names
+
+        with self.app.app_context():
+            self.assertEqual(_agent_display_names(), {"example": "EXAMPLE"})
+
+
 class TestAnInstallWithNoDeclaredName(unittest.TestCase):
     """An identity file with no '**Name:**' line still works."""
 

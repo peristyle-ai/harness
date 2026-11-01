@@ -491,9 +491,10 @@ class GroupStore:
         though it is the most recently touched conversation row for
         this agent.
         """
-        # The SCHEMA is the lower-case form; the agent_name COLUMN keeps
-        # the display form, so list_conversations' exact-match filter
-        # (c.agent_name = %s) still finds the row.
+        # The SCHEMA is the lower-case fold of the key; the agent_name
+        # COLUMN keeps the KEY, so list_conversations' exact-match
+        # filter (c.agent_name = %s) still finds the row. The display
+        # name is a label and never reaches the database.
         schema = canonical_agent_name(agent_name)
         metadata = json.dumps({"kind": "group", "conversation_id": conversation_id})
         with self.pool.connection() as conn:
