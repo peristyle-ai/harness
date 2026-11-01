@@ -303,6 +303,18 @@ class AppConfig:
 
 
 
+def _merge_llm(global_llm: dict, override: dict) -> dict:
+    """A per-agent override on top of the global llm: block.
+
+    The override wins for the fields it names; everything else comes
+    from the global block. The nested 'per_agent' map itself is not
+    inherited -- it is a container, not an LLM setting.
+    """
+    merged = {k: v for k, v in global_llm.items() if k != "per_agent"}
+    merged.update(override or {})
+    return merged
+
+
 def _make_llm(d: dict) -> _Llm:
     """Build an _Llm dataclass from a config dict (used for both the
     global llm: block and per-agent llm_per_agent entries).
@@ -373,11 +385,25 @@ def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
     agents_list = tuple(a.get("agents") or (a["default_agent"],))
     pie_root_raw = a.get("pie_root") or "pie"
 
-    # Per-agent LLM overrides (optional). Each entry is a complete _Llm
-    # config block. Missing agents fall through to the global llm: block
-    # (dispatch is in app.extensions.init_app + AgentLoop._adapter_for).
+    # Per-agent LLM overrides (optional). Each entry is a PARTIAL
+    # override: the fields it does not mention are inherited from the
+    # global llm: block. So an entry that only wants a different model
+    # is one line:
+    #
+    #     llm:
+    #       per_agent:
+    #         example:
+    #           model: some-other-model
+    #
+    # It used to be a COMPLETE block -- every field repeated, including
+    # the api_key -- and that was the trap: to get one field changed you
+    # had to copy eight, and the key went into the file once per agent.
+    # An agent with no entry at all inherits the global block exactly.
     llm_per_agent_raw = llm.get("per_agent") or {}
-    llm_per_agent = {name: _make_llm(cfg) for name, cfg in llm_per_agent_raw.items()}
+    llm_per_agent = {
+        name: _make_llm(_merge_llm(llm, cfg))
+        for name, cfg in llm_per_agent_raw.items()
+    }
 
     cfg = AppConfig(
         app=_App(

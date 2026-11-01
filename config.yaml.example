@@ -80,26 +80,25 @@ llm:
   streaming: 1
   # Per-agent LLM overrides.
   #
-  # Each entry is a COMPLETE llm block for one agent: the harness uses it
-  # instead of the global block above, replacing it wholesale rather than
-  # merging field by field -- so every field must be supplied. An agent
-  # with no entry falls through to the global block.
+  # Each entry is a PARTIAL override for one agent: the fields it names
+  # replace the global ones above, and the fields it does not name are
+  # inherited. So changing one agent's model is one line:
   #
-  # A single-agent install needs none of this, which is why it is
-  # commented out below. Uncomment it (and add the matching
-  # <AGENT>_LLM_* values to this file) when one agent needs a different
-  # model or a different API key from the rest.
+  #     per_agent:
+  #       peribot:
+  #         model: MiniMax-M3.1-Flash
+  #
+  # You do not need this for isolation. Every agent already gets its
+  # own HTTP client -- and therefore its own connection -- so one agent's
+  # upstream reset cannot take another agent's turn down with it. This
+  # block is for changing the SETTINGS, not for keeping agents apart.
+  #
+  # A single-agent install needs none of it, which is why it is commented
+  # out below.
   #
   # per_agent:
   #   peribot:
-  #     adapter: minimax_m31_flash
-  #     api_key: YOUR_LLM_API_KEY_HERE
-  #     base_url: https://api.minimax.io/anthropic
   #     model: MiniMax-M3.1-Flash
-  #     max_tokens: 524288
-  #     timeout_s: 180
-  #     temperature: 0.7
-  #     streaming: 1
 
 embedding:
   # WHERE the embeddings come from. Two shapes, chosen by the base_url:

@@ -88,8 +88,8 @@ def render_config(inst: dict, generated: dict[str, str]) -> str:
     substitution is what keeps the YAML valid whatever the values are.
 
     The per-agent LLM overrides are dropped: this install has one agent,
-    and a per_agent entry is a wholesale replacement of the global block,
-    so the agent would need a second API key for no reason.
+    so there is nothing to override -- and every agent now gets its own
+    HTTP client on its own, whether it has a per_agent entry or not.
     """
     cfg = yaml.safe_load((ROOT / "config.yaml.example").read_text())
 
@@ -133,7 +133,8 @@ def render_config(inst: dict, generated: dict[str, str]) -> str:
     cfg["embedding"]["dimensions"] = int(emb.get("dimensions", 1024))
     cfg["embedding"]["timeout_s"] = int(emb.get("timeout_s", 30))
 
-    # The per-agent block goes: one agent, one API key.
+    # The per-agent block goes: one agent, one API key. (And every agent
+    # gets its own HTTP client regardless -- see app/extensions.py.)
     cfg["llm"].pop("per_agent", None)
 
     cfg["security"]["internal_token"] = generated["internal_token"]
