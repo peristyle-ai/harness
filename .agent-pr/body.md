@@ -1,47 +1,45 @@
-The gates are good at the shapes they know: a mailbox, a path into a
-home directory, a switch to a named account, an agent name in an
-agent-name position. This change is about the three things that were in
-the tree and that neither gate could express.
+The identifier rules read file CONTENT. The author of a commit is not
+in any file -- and a commit is a public page: the hosting site prints
+the author and the committer, indexes them, and keeps them.
 
-WHAT WAS IN THE TREE
+The work in this repository is done by agents pushing from the
+installs, and an agent pushes with the git identity of the install it
+pushes from. Until this change, that identity was a person's mailbox at
+the operator's own domain. The history of this repository was scrubbed
+of it; the next commit after a scrub would have put it straight back,
+and nothing would have said so.
 
-- A tenant's name, in a comment in production code. The comment was
-  explaining that the install's database can be called whatever the
-  operator called it, and it used one tenant's name as the example.
-- A tenant's name, in the identity template -- the tracked file every
-  install starts from, and therefore read by every reader of a public
-  repository.
-- A private LAN address, used as an example of an address that is not
-  loopback, in a test.
+WHAT CHANGES
 
-WHY THE GATES DID NOT CATCH THEM
+- `scripts/check_commit_identities.py` (new) reads the author and the
+  committer of every commit in the history. An identity is acceptable
+  when it is a no-reply address at the hosting site's own domain, a
+  placeholder domain, or a ROLE local part -- a role says "this is a
+  function", and a person's name says "this is a person".
+- `.github/workflows/tests.yml` gains an `identity-scan` job that runs
+  it over the whole history.
+- `tests/test_check_commit_identities.py` (new) plants commits with the
+  identities that must not be published, and asserts that the scanner
+  finds them.
 
-- The first two are NAMES, not shapes. A rule that banned a name would
-  have to contain the name, and a list of names is itself the leak, so
-  the rule set cannot cover this class. It is caught by review, which is
-  what review is for.
-- The third is a private address in a test fixture. A rule for "a
-  private address" would match every address in every test, and it would
-  have to know the range to exclude. The example now uses the
-  documentation range, which is the correct thing for a public
-  repository to use as an example anyway.
+THE SCANNER NEVER PRINTS THE ADDRESS
 
-THE SCOPE FIX
+A gate that prints the identifier it found has republished it: a CI log
+on a public repository is public, indexed, and immutable, and it
+outlives the branch that carried the identifier. The finding is
+reported as the commit and the role; the address is only counted. There
+is a test for that too.
 
-The working-tree guard listed the trees it reads, and it did not list
-the identity template. The branch gate reads a whole tree, so it did
-scan it. The two gates therefore had different scopes, and a rule that
-only one of them applies is a rule that is not enforced -- which is
-exactly how the two drifted apart in the first place.
+A RULE THAT CANNOT SEE IS NOT A RULE
 
-The working-tree guard now reads the identity template as well. It is
-tracked in this repository and it ships to every install, so it was
-always in scope; it just was not in the list.
+Scanning zero commits reports INCONCLUSIVE and exits non-zero. Silence
+is not a pass.
 
-WHAT ELSE CHANGED
+ONE MORE FILE IS EXEMPT FROM THE IDENTIFIER GUARD
 
-The scope note in the shared rules module said that the identity
-template is "not in this repository". It is in this repository. The
-note now says what is true.
+The new test plants an address, to prove the scanner catches one. A
+file that has to contain the shape to prove the rule works cannot also
+obey the rule about that shape -- which is the same reason the rules
+module and the tree guard are already exempt.
 
-The full suite passes, and the secret scan is clean.
+The full suite passes, and the other gates are clean.

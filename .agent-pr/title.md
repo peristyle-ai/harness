@@ -1,1 +1,1 @@
-fix(repo): three identifiers the gates could not see
+ci(repo): no commit may carry an identity that names a person
