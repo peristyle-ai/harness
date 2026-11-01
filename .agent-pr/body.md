@@ -58,3 +58,29 @@ version walks backwards.
 
 This pull request touches `app/static/app.js` only; #7 touches
 `app/static/group.js` and `app/static/app.css`. They do not overlap.
+
+## The service worker cache
+
+`app/static/sw.js` is CACHE-FIRST for the static shell: a browser that
+already installed it keeps serving the OLD `app.js` until the cache name
+changes. This change alters the bundle, so the cache name moves
+`harness-v11` -> `harness-v13`.
+
+**Not `harness-v12`**: the other open pull request (#7) already claims
+`harness-v12`, and two bundle changes landing on the same cache name
+would mean the second one never reaches an installed PWA. The two bumps
+differ, so the browser re-precaches the current bundle whichever order
+they are merged in.
+
+`tests/test_collapsed_trace_by_default.py` pins the rule: a change that
+touches the static bundle must change the cache name in the same change.
+It was seen failing on the old code first.
+
+## The second merge will report a conflict
+
+This branch is based on `main`, and so is #7; both change the same two
+lines from the same base - the version in `pyproject.toml` and the
+cache name in `sw.js`. Merge **#7 first**, then this one, and the
+second merge will ask for a resolution on those two lines: take
+**0.1.23** and **harness-v13**. Say the word and I will do it in one
+API call once you have read the diff.
