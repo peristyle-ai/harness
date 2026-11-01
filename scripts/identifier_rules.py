@@ -220,7 +220,13 @@ def describe(rule: str) -> str:
 # These files hold the shapes they look for, so they are excluded from
 # their own scan.  The exclusion is by basename: the rules module and
 # the test that applies it are the two files that cannot obey them.
-GUARD_FILES = ("test_no_install_identifiers.py", "identifier_rules.py")
+#
+# ``test_check_commit_identities.py`` is here for the same reason: it
+# plants an address, to prove that the identity scanner catches one.  A
+# file that has to contain the shape to prove the rule works cannot also
+# obey the rule about that shape.
+GUARD_FILES = ("test_no_install_identifiers.py", "identifier_rules.py",
+               "test_check_commit_identities.py")
 
 # The file the template's agent roster is read from.
 CONFIG_EXAMPLE = "config.yaml.example"

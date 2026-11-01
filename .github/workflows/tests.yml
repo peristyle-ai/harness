@@ -55,6 +55,34 @@ jobs:
       - name: no public branch carries one install's identifiers
         run: python scripts/check_public_refs.py
 
+  identity-scan:
+    # The identifier rules read file CONTENT.  The author of a commit is
+    # not in any file -- and a commit is a public page: the hosting site
+    # prints the author and the committer, indexes them, and keeps them.
+    #
+    # The work in this repository is done by agents pushing from the
+    # installs, and an agent pushes with the git identity of the install
+    # it pushes from.  Until this job existed, that identity was a
+    # person's mailbox at the operator's own domain, so the next commit
+    # after a scrub put the address straight back into the public
+    # record.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Every commit, not a shallow clone: the author of a commit
+          # that is five years old is published just as loudly as the
+          # author of the last one.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: no commit carries an identity that names a person
+        run: python scripts/check_commit_identities.py
+
   pytest:
     runs-on: ubuntu-latest
 
