@@ -1,50 +1,49 @@
-An agent has THREE names, and they are not the same thing:
+An adapter holds one `httpx.Client`, with one connection pool. On most
+installs **every agent shared that one client** — the registry was
+populated only for the agents listed in `llm.per_agent`, which was added
+for a per-agent *model* test and never for isolation.
 
-| form | example | what it is |
-|---|---|---|
-| key | `example` | the identifier — the schema, `app.agents`, the API path, the `agent_name` column, the group's roster row |
-| display name | `EXAMPLE` | the label — the chat header, the entity list, the group bubble |
-| schema form | `example` | the key, folded |
+**A shared client is a shared failure domain.** When the upstream resets
+that connection, every stream in flight on it dies at the same moment. On
+2026-11-01 two agents on one install, sharing one client, both lost their
+turn on the same upstream reset — three milliseconds apart.
 
-The harness conflated the first two, so the label could only ever be the
-key with different capitals. A rename to a lower-case key therefore took
-the label with it: the chat header showed the key, the entity list showed
-the key, the group chips showed the key.
+## What changes
 
-This separates them. The display name is read from the agent's own
-`IDENTITY.md` (`**Name:**`), so the agent declares what it is called and
-the operator does not have to configure it. The key stays the identifier
-everywhere it has to be one.
+- **Every agent gets its own adapter** — and therefore its own client,
+  its own pool and its own connection. An upstream reset kills one
+  agent's turn, not all of them.
+- **`llm.per_agent` becomes a partial override.** It used to be a
+  complete `llm` block — every field repeated, `api_key` included — so
+  getting an isolated client meant copying the key once per agent, and
+  most installs just shared instead. Now an entry names only what
+  changes and inherits the rest:
 
-## It also fixes the empty chat window
+  ```yaml
+  llm:
+    per_agent:
+      example:
+        model: some-other-model
+  ```
 
-A bookmark — or a link, or a person typing the name the agent answers to
-— carrying the label used to reach an API that only knew the key, and got
-a 400. The chat window then rendered **empty**: the data was intact, the
-service healthy, and a count query proved the conversations present.
+  No duplication, and no key copied per agent.
 
-Now a name in a URL resolves to the agent:
+- **A full block still loads unchanged.** Merging a complete block over
+  the global one yields the same values, so existing configs keep
+  working untouched.
 
-- the web route redirects the label to the canonical key URL;
-- the API rewrites the path segment before the route sees it, so a stale
-  bookmark keeps working;
-- the name the caller sent is kept, so an icon uploaded under the old
-  name is still found.
+The cost is one socket and a pool per agent.
 
-The HMI renders the label and links with the key — in the entity list and
-in the group roster and bubbles alike.
+## Tests
 
-## Notes for the reviewer
+- two agents on one install get two different clients and two different
+  pools — with or without a config entry;
+- the partial override merges as documented, and does not mutate the
+  global block;
+- a full block still builds.
 
-- The examples are the neutral placeholders the rest of the repo uses.
-- The display name is a **label**: it never reaches SQL, is never an
-  identifier, and does not have to be unique (an ambiguous label resolves
-  to nothing rather than guessing).
-- An install whose identity file declares no name still works: the label
-  falls back to the key, and the old capitalised form still finds the
-  agent through the folded-key fallback.
-- 323 tests pass, including 28 new ones across the helpers and the
-  routes. The route tests are the ones that matter: a count query proves
-  storage, never a screen.
+## For the reviewer
 
-Proposed by: Grove
+The change is generic and names no install. The installer drops
+`per_agent` for a single-agent install, which is still correct — and
+now for a different reason: every agent gets its own client either way.

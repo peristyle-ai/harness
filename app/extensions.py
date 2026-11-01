@@ -181,31 +181,55 @@ def build_extensions(config: Any) -> dict[str, Any]:
     default_memory = memory_apis.get(config.app.default_agent) or next(iter(memory_apis.values()))
     default_bootstrap = bootstrap_loaders.get(config.app.default_agent) or next(iter(bootstrap_loaders.values()), None)
 
-    # Per-agent LLM adapter registry (added 2026-10-19 for a per-agent
-    # z.ai test). For each agent that has an entry in config.llm_per_agent,
-    # build a separate adapter using the override config. Missing agents
-    # fall through to the global `adapter` (passed to AgentLoop as the
-    # default — see AgentLoop._adapter_for).
+    # Per-agent LLM adapter registry.
+    #
+    # EVERY agent gets its own adapter, and therefore its own HTTP
+    # client, its own connection pool and its own connection. That is
+    # not a luxury: a shared client is a SHARED FAILURE DOMAIN. The
+    # adapter holds one httpx.Client with a pool; when the upstream
+    # resets that connection, every stream in flight on it dies at the
+    # same moment. On 2026-11-01 two agents on one install, sharing one
+    # client, both lost their turn on the same upstream reset — three
+    # milliseconds apart.
+    #
+    # It used to be the other way round: the registry was populated only
+    # for the agents listed in llm.per_agent, which was added for a
+    # per-agent MODEL test and never for isolation. To get an isolated
+    # client you had to copy a complete llm: block — eight fields, the
+    # api_key included — once per agent. So most installs just shared
+    # the global adapter and took the shared failure domain.
+    #
+    # Now llm.per_agent is a PARTIAL override (see app.config._merge_llm):
+    # an agent with no entry at all gets the global block, and an agent
+    # that names one field gets that field changed and the rest
+    # inherited. No duplication, and no api_key copied per agent.
     adapter_registry: dict[str, BaseLLM] = {}
-    if config.llm_per_agent:
-        for agent_name, override_llm_cfg in config.llm_per_agent.items():
-            # Build a shallow-copied config object with the override llm
-            # so the adapter's __init__ reads the right api_key/base_url/etc.
+    for agent_name in config.app.agents:
+        override_llm_cfg = (
+            config.llm_per_agent.get(agent_name) if config.llm_per_agent else None
+        )
+        if override_llm_cfg is None:
+            # The same settings as the global block, but its OWN adapter
+            # — which is the point: its own client, its own connection.
+            agent_config = config
+        else:
             from dataclasses import replace
-            override_config = replace(config, llm=override_llm_cfg)
-            try:
-                override_adapter = get_adapter(override_config)
-                adapter_registry[agent_name] = override_adapter
-                log.info(
-                    "llm adapter override: agent=%s id=%s name=%s model=%s base_url=%s",
-                    agent_name, override_adapter.adapter_id,
-                    override_adapter.name, override_llm_cfg.model, override_llm_cfg.base_url,
-                )
-            except Exception as e:
-                log.error(
-                    "llm adapter override: agent=%s FAILED to build (%s: %s); agent will fall back to global LLM",
-                    agent_name, type(e).__name__, e,
-                )
+            agent_config = replace(config, llm=override_llm_cfg)
+        try:
+            agent_adapter = get_adapter(agent_config)
+            adapter_registry[agent_name] = agent_adapter
+            log.info(
+                "llm adapter: agent=%s id=%s name=%s model=%s base_url=%s own_client=yes%s",
+                agent_name, agent_adapter.adapter_id, agent_adapter.name,
+                getattr(agent_adapter, "model", "?"),
+                getattr(agent_adapter, "base_url", "?"),
+                " (override)" if override_llm_cfg is not None else "",
+            )
+        except Exception as e:
+            log.error(
+                "llm adapter: agent=%s FAILED to build (%s: %s); agent will fall back to global LLM",
+                agent_name, type(e).__name__, e,
+            )
 
     loop = AgentLoop(
         adapter=adapter,

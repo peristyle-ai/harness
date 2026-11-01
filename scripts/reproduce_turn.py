@@ -38,10 +38,13 @@ pool = ConnectionPool(config.db.url, min_size=1, max_size=4,
 embedding = EmbeddingClient(config)
 
 adapter = get_adapter(config)
+# The same shape the app uses: every agent gets its own adapter (and so
+# its own HTTP client). Only the agent being reproduced matters here,
+# but building it the same way keeps the reproduction faithful.
 adapter_registry = {}
-if config.llm_per_agent and agent in config.llm_per_agent:
-    adapter_registry[agent] = get_adapter(
-        replace(config, llm=config.llm_per_agent[agent]))
+_override = config.llm_per_agent.get(agent) if config.llm_per_agent else None
+_agent_config = config if _override is None else replace(config, llm=_override)
+adapter_registry[agent] = get_adapter(_agent_config)
 
 bootstrap_registry = {}
 for name in config.app.agents:
