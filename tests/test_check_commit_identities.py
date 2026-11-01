@@ -1,9 +1,16 @@
-"""The identity scanner must actually catch an identity that names a person.
+"""The identity scanner must actually catch a MAILBOX -- and must let a
+signed NAME through.
 
 A gate that cannot fail is not a gate.  This test plants commits in a
 throwaway git repository, with the identities that must not be published,
 and asserts that the scanner finds them -- and that a CLEAN result is
 only ever reported when something was really scanned.
+
+It also pins the other half of the rule, which matters just as much: the
+NAME on a commit is attribution.  The operator reads the history of the
+repository to see which agent did which piece of work, so a commit signed
+with an agent's name must PASS, and a scanner that blocked it would be
+fighting the operator's own workflow.
 
 scripts/check_commit_identities.py is the enforcement for a rule that
 the tree-level rules cannot express: the rules read file CONTENT, and
@@ -130,3 +137,33 @@ def test_the_scanner_never_prints_the_address_it_found(repo: Path):
     assert code == 1
     assert secret not in out
     assert "a.person" not in out
+
+
+# --- the name is attribution, and it is allowed --------------------------
+
+
+def test_a_signed_agent_name_passes(repo: Path):
+    """The operator reads the history to see which agent did the work.
+
+    A commit signed with an agent's NAME is the whole point of a signed
+    commit, so it must pass -- as long as the ADDRESS is a no-reply one.
+    """
+    commit(repo, "Durthu", "peristyle-ai@users.noreply.github.com")
+    code, out = scan(repo)
+    assert code == 0, out
+
+
+def test_a_signed_name_with_a_real_mailbox_is_still_caught(repo: Path):
+    """The name does not launder the address."""
+    commit(repo, "Durthu", "a.person@an-operator-domain.example")
+    code, out = scan(repo)
+    assert code == 1, out
+
+
+def test_a_name_that_is_itself_an_address_is_caught(repo: Path):
+    """A name that is an address is the leak wearing a hat."""
+    commit(repo, "a.person@an-operator-domain.example",
+           "peristyle-ai@users.noreply.github.com")
+    code, out = scan(repo)
+    assert code == 1, out
+    assert "name that is an address" in out

@@ -1,1 +1,1 @@
-ci(repo): no commit may carry an identity that names a person
+ci(repo): agents sign their commits with their own names
