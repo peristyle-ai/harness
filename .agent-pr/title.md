@@ -1,1 +1,1 @@
-feat(group-chat): the group stream renders the thought stream and the tool trace the 1:1 stream renders
+preview: the group chat stream parity + the collapsed trace, together
