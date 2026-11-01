@@ -16,7 +16,18 @@
 // Second bump the same day: the toggle was hidden for EVERYONE because the
 // admin check ran while currentUser was still null (the auth check is
 // asynchronous). The fix has to reach the installed PWAs too.
-const CACHE_NAME = 'harness-v11';
+// 2026-11-01 (bump for the collapsed-by-default trace): the chat bundle
+// changed again -- the thought stream and the tool-call trace now start
+// collapsed for everyone. The service worker is CACHE-FIRST for the
+// static shell, so an installed PWA would keep serving the old app.js.
+//
+// The name moves to harness-v13, NOT harness-v12: the other open pull
+// request (#7, the group chat stream parity) already claims harness-v12,
+// and two bundle changes that land on the same cache name would mean the
+// second one never reaches an installed PWA. A change to sw.js makes the
+// browser re-precache the current bundle, so the two bumps differ
+// whichever order they are merged in.
+const CACHE_NAME = 'harness-v13';
 const PRECACHE = [
   '/',
   '/static/app.css',

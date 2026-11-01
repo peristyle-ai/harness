@@ -966,16 +966,11 @@
       let thoughtCount = 0;
       const liveTrace = document.createElement('details');
       liveTrace.className = 'trace';
-      // For admin users, default the trace to OPEN so all
-      // thought-stream items (think / tool_start / tool_end / nudge)
-      // are visible during streaming too. The final-bubble
-      // transition below keeps it open for admin (non-admin gets
-      // collapsed at final time). This is the user-facing
-      // expression of "display the thought stream permanently".
-      if (currentUser && currentUser.role === 'admin') {
-        liveTrace.setAttribute('open', '');
-        liveThoughts.setAttribute('open', '');
-      }
+      // Both sections start CLOSED, for everyone (operator: "i would
+      // like the thought stream and tool call summarys to be collapsed
+      // by default"). They are <details>, so the content is one click
+      // away -- and the answer is the answer, not the machinery
+      // behind it.
       const liveSummary = document.createElement('summary');
       liveSummary.textContent = 'working...';
       const liveTraceList = document.createElement('ol');
@@ -1194,41 +1189,20 @@
         // Ensure no stale chip from streaming remains
         Array.from(liveDiv.querySelectorAll(':scope > .attachments')).forEach(n => n.remove());
       }
-      // For admin users, keep the thought stream visible in the
-      // final bubble (no collapse, no max-height cap, keep the
-      // live-style summary text). For non-admins, collapse to a
-      // static 'N iter · M tool calls · Zs' summary as before.
-      const isAdmin = !!(currentUser && currentUser.role === 'admin');
-      if (isAdmin) {
-        // Drop the max-height cap so all trace items are scrollable
-        // (still inside the <details>, but defaults to open below).
-        liveTraceList.style.maxHeight = '';
-        // Keep the <details> open so the trace is visible by default.
-        liveTrace.setAttribute('open', '');
-        // Keep the live-style summary (the last iter label) rather
-        // than the static count. If we never got a tool_start or
-        // nudge event, fall back to a static count.
-        const liveSummaryText = liveSummary.textContent;
-        if (!liveSummaryText || liveSummaryText === 'working...' || liveSummaryText === 'iter ' + iters + '...') {
-          // already in a live-style form, leave it
-        } else if (liveSummaryText.includes('thinking')) {
-          // thinking... (iter N) — keep
-        } else {
-          // static count was set; re-set to the iter label
-          liveSummary.textContent = 'iter ' + iters + '...';
-        }
-      } else {
-        liveTraceList.style.maxHeight = '160px';
-        liveSummary.textContent = iters + ' iter · ' + traceItems + ' tool call' + (traceItems === 1 ? '' : 's') + ' · ' + (lat / 1000).toFixed(1) + 's';
-        liveTrace.removeAttribute('open');
-        liveThoughtLines.style.maxHeight = '160px';
-        liveThoughts.removeAttribute('open');
-      }
+      // The turn is over: the trace collapses into a static summary
+      // and both sections stay CLOSED, for everyone (operator: "i
+      // would like the thought stream and tool call summarys to be
+      // collapsed by default"). The summary still says what is in
+      // there, so a collapsed section is informative.
+      liveTraceList.style.maxHeight = '160px';
+      liveSummary.textContent = iters + ' iter · ' + traceItems + ' tool call' + (traceItems === 1 ? '' : 's') + ' · ' + (lat / 1000).toFixed(1) + 's';
+      liveTrace.removeAttribute('open');
+      liveThoughtLines.style.maxHeight = '160px';
+      liveThoughts.removeAttribute('open');
       // The thought section always states how many thoughts it holds.
       liveThoughtsSummary.textContent = 'thought stream · ' + thoughtCount;
       const time = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-      const adminMarker = isAdmin ? ' · admin view' : '';
-      liveMeta.textContent = 'assistant · ' + (finalEvent.model || '') + ' · ' + time + adminMarker;
+      liveMeta.textContent = 'assistant · ' + (finalEvent.model || '') + ' · ' + time;
     }
 
     // === Non-streaming fallback ========================================
