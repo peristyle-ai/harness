@@ -328,6 +328,18 @@ async def run(args: dict, ctx) -> dict:
     env = safe_env()
     # Mark the env so the model can see it's a sandboxed run
     env["HARNESS_TOOL_EXEC_BASH"] = "1"
+    # WHO IS RUNNING THIS.  The operator reads the history of the
+    # repository to see which agent did which piece of work, and sometimes
+    # asks one agent to step in for another.  So a commit made from a
+    # tool call has to say who made it, and the only place the tooling
+    # can learn that is here: the tool context knows the agent, and the
+    # environment is what a command can read.
+    #
+    # It is a HANDLE, not a mailbox: the signature that lands on the
+    # commit is resolved by scripts/agent_signature.sh, which turns the
+    # handle into the agent's own name and signs the commit with the
+    # repository's no-reply address.
+    env["HARNESS_AGENT_NAME"] = str(getattr(ctx, "agent_name", "") or "")
 
     try:
         # subprocess.run is sync, so run it in a thread to keep

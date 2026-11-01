@@ -221,12 +221,13 @@ def describe(rule: str) -> str:
 # their own scan.  The exclusion is by basename: the rules module and
 # the test that applies it are the two files that cannot obey them.
 #
-# ``test_check_commit_identities.py`` is here for the same reason: it
-# plants an address, to prove that the identity scanner catches one.  A
-# file that has to contain the shape to prove the rule works cannot also
-# obey the rule about that shape.
+# ``test_check_commit_identities.py`` and ``test_agent_signature.py``
+# are here for the same reason: they plant an address, to prove that the
+# identity scanner catches one and that the signature resolver refuses
+# one.  A file that has to contain the shape to prove the rule works
+# cannot also obey the rule about that shape.
 GUARD_FILES = ("test_no_install_identifiers.py", "identifier_rules.py",
-               "test_check_commit_identities.py")
+               "test_check_commit_identities.py", "test_agent_signature.py")
 
 # The file the template's agent roster is read from.
 CONFIG_EXAMPLE = "config.yaml.example"

@@ -133,8 +133,26 @@ PY
     die "nothing staged -- the worktree has no changes to propose"
   fi
 
-  git -c user.name="${GIT_AUTHOR_NAME:-Harness Agent}" \
-      -c user.email="${GIT_AUTHOR_EMAIL:-peristyle-ai@users.noreply.github.com}" \
+  # --- who signs it ------------------------------------------------------
+  # The operator reads the history to see which agent did which piece of
+  # work, so the commit is signed with the NAME of the agent that did it.
+  # The ADDRESS is the repository's own no-reply address: a name in a
+  # commit author field is attribution, and a mailbox is how you reach a
+  # person. The identity gate polices the address, not the name.
+  #
+  # The signature is resolved by scripts/agent_signature.sh, which reads
+  # the agent's identity file when it can find it. The install root is
+  # passed explicitly: in a worktree this script's own path leads to the
+  # WORKTREE, and the identity files live in the INSTALL beside it.
+  COMMON="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  INSTALL_ROOT="${INSTALL_ROOT:-$(dirname "$COMMON" 2>/dev/null || echo "$REPO_ROOT")}"
+  SIGNATURE="$("$REPO_ROOT/scripts/agent_signature.sh" --install-root "$INSTALL_ROOT" 2>/dev/null || true)"
+  [ -n "$SIGNATURE" ] || SIGNATURE="Harness Agent <peristyle-ai@users.noreply.github.com>"
+  SIGN_NAME="${SIGNATURE%% <*}"
+  SIGN_EMAIL="${SIGNATURE##*<}"; SIGN_EMAIL="${SIGN_EMAIL%>}"
+
+  git -c user.name="$SIGN_NAME" \
+      -c user.email="$SIGN_EMAIL" \
       commit -q -m "$TITLE
 
 $BODY
