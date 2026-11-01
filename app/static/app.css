@@ -143,18 +143,28 @@ a:hover { color: var(--accent-hover); }
    interim narration, one line per iteration. It sits under the answer,
    next to the tool-call trace, and is LIVE ONLY -- it is not a turn, so
    it never enters the chat history and it is gone after a refresh (like
-   the iter summary). The marker line is dimmer than the thought itself. */
-.msg .thoughts {
+   the iter summary). The marker line is dimmer than the thought itself.
+
+   Every rule below is scoped to BOTH bubble classes: .msg is the 1:1
+   chat bubble and .gmsg is the group chat bubble. The group chat
+   renders the same trace and the same thought stream, so it needs the
+   same styling -- with only .msg in scope the group's sections
+   rendered unstyled, which is what "the tool call formatting is poor"
+   turned out to be. */
+.msg .thoughts ,
+.gmsg .thoughts {
   margin-top: 6px;
   font-size: 12px;
   opacity: 0.85;
 }
-.msg .thoughts summary {
+.msg .thoughts summary ,
+.gmsg .thoughts summary {
   cursor: pointer;
   color: var(--muted, #888);
   user-select: none;
 }
-.msg .thought-lines {
+.msg .thought-lines ,
+.gmsg .thought-lines {
   display: flex; flex-direction: column; gap: 2px;
   margin: 4px 0 0 0;
   padding-left: 8px;
@@ -164,8 +174,10 @@ a:hover { color: var(--accent-hover); }
   color: var(--text-muted);
   font-style: italic;
 }
-.msg .thought-line { white-space: pre-wrap; word-break: break-word; }
-.msg .thought-line.marker { opacity: 0.55; font-style: italic; }
+.msg .thought-line ,
+.gmsg .thought-line { white-space: pre-wrap; word-break: break-word; }
+.msg .thought-line.marker ,
+.gmsg .thought-line.marker { opacity: 0.55; font-style: italic; }
 .msg .meta {
   font-size: 10px; color: var(--text-muted);
   margin-top: 4px;
@@ -473,28 +485,36 @@ main#main {
   0%, 100% { border-left-color: var(--accent, #4f9aff); }
   50%      { border-left-color: transparent; }
 }
-.msg .trace {
+.msg .trace ,
+.gmsg .trace {
   margin-top: 6px;
   font-size: 12px;
   opacity: 0.85;
 }
-.msg .trace summary {
+.msg .trace summary ,
+.gmsg .trace summary {
   cursor: pointer;
   color: var(--muted, #888);
   user-select: none;
 }
-.msg .trace-list {
+.msg .trace-list ,
+.gmsg .trace-list {
   margin: 4px 0 0 0;
   padding: 0 0 0 18px;
   max-height: 240px;
   overflow-y: auto;
   list-style: decimal;
 }
-.msg .trace-item { color: var(--muted, #888); }
-.msg .trace-item.pending { color: var(--accent, #4f9aff); }
-.msg .trace-item.ok { color: var(--ok, #5fc77e); }
-.msg .trace-item.err { color: var(--err, #e85a85); }
-.msg .trace-item.nudge { color: var(--warn, #e89c4f); }
+.msg .trace-item ,
+.gmsg .trace-item { color: var(--muted, #888); }
+.msg .trace-item.pending ,
+.gmsg .trace-item.pending { color: var(--accent, #4f9aff); }
+.msg .trace-item.ok ,
+.gmsg .trace-item.ok { color: var(--ok, #5fc77e); }
+.msg .trace-item.err ,
+.gmsg .trace-item.err { color: var(--err, #e85a85); }
+.msg .trace-item.nudge ,
+.gmsg .trace-item.nudge { color: var(--warn, #e89c4f); }
 
 /* Markdown rendering (Phase 16.2, 2026-10-20): styles for HTML
    emitted by marked + sanitised by DOMPurify inside .msg bubbles.

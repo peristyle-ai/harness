@@ -1,1 +1,1 @@
-fix(llm): one adapter per agent, so one upstream reset cannot take another agent's turn down with it
+feat(group-chat): the group stream renders the thought stream and the tool trace the 1:1 stream renders
