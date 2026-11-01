@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.json">
   <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/static/icon-180.png">
-  <title>{{ entity }} — harness</title>
+  <title>{{ display_name or entity }} — harness</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -24,7 +24,7 @@
     </svg>
   </a>
   <div class="entity-icon" id="entityIcon" style="--icon-bg: #4f9aff; width: 32px; height: 32px; font-size: 13px;"></div>
-  <div class="title" id="entityName">{{ entity }}</div>
+  <div class="title" id="entityName">{{ display_name or entity }}</div>
   <div class="typing-indicator" id="typingIndicator" aria-live="polite" aria-label="Agent is typing">
     <span>typing</span>
     <span class="dots" aria-hidden="true">

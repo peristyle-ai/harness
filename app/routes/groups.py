@@ -70,6 +70,22 @@ def _require_member(group_id: str):
     return user, group, None
 
 
+def _with_display_names(group):
+    """Stamp the display names onto a group before it is serialised.
+
+    The roster holds the KEYS; the HMI renders the labels. Doing it here
+    means every route that returns a group carries them, without each
+    one remembering to.
+    """
+    if group is None:
+        return None
+    try:
+        group.display_names = _agent_display_names()
+    except Exception:
+        pass
+    return group
+
+
 def _installed_agents() -> list[str]:
     cfg = current_app.config["HARNESS_CONFIG_OBJ"]
     registry = current_app.extensions["harness"].get("bootstrap_registry")
@@ -78,13 +94,32 @@ def _installed_agents() -> list[str]:
     return list(cfg.app.agents or ())
 
 
+def _agent_display_names() -> dict[str, str]:
+    """agent key -> the name it displays in the UI.
+
+    The KEY is the identifier (the schema, the roster row, the API
+    path). The DISPLAY NAME is the label the agent calls itself. The
+    HMI renders the label; the roster keeps the key.
+    """
+    from app.routes.agent_lookup import agent_display_names
+    return agent_display_names()
+
+
 # --- roster helpers -------------------------------------------------------
 
 @bp.route("/agents", methods=["GET"])
 @login_required_json
 def agents_list():
-    """The installed agent roster (used by the new-group dialog)."""
-    return jsonify({"agents": _installed_agents()}), 200
+    """The installed agent roster (used by the new-group dialog).
+
+    'agents' is the list of KEYS (what the roster stores and what the
+    API path takes). 'display_names' maps a key to the label the agent
+    shows, so the dialog can render the label and still send the key.
+    """
+    return jsonify({
+        "agents": _installed_agents(),
+        "display_names": _agent_display_names(),
+    }), 200
 
 
 @bp.route("/admin/users", methods=["GET"])
@@ -110,7 +145,7 @@ def groups_list():
     user = current_user()
     groups = _store().list_for_user(user.id)
     return jsonify({
-        "groups": [g.to_dict() for g in groups],
+        "groups": [_with_display_names(g).to_dict() for g in groups],
         "is_admin": _is_admin(user),
     }), 200
 
@@ -167,7 +202,7 @@ def groups_create():
         )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"group": group.to_dict()}), 201
+    return jsonify({"group": _with_display_names(group).to_dict()}), 201
 
 
 @bp.route("/groups/<uuid:group_id>", methods=["GET"])
@@ -177,7 +212,7 @@ def group_get(group_id: UUID):
     _, group, err = _require_member(str(group_id))
     if err:
         return err
-    return jsonify({"group": group.to_dict()}), 200
+    return jsonify({"group": _with_display_names(group).to_dict()}), 200
 
 
 @bp.route("/groups/<uuid:group_id>", methods=["DELETE"])
@@ -213,7 +248,7 @@ def group_add_members(group_id: UUID):
     valid = [m for m in member_ids if m in known]
     added = store.add_members(str(group_id), valid, user.id)
     group = store.get(str(group_id))
-    return jsonify({"added": added, "group": group.to_dict() if group else None}), 200
+    return jsonify({"added": added, "group": _with_display_names(group).to_dict() if group else None}), 200
 
 
 @bp.route("/groups/<uuid:group_id>/members/<int:user_id>", methods=["DELETE"])
@@ -227,7 +262,7 @@ def group_remove_member(group_id: UUID, user_id: int):
     if not store.remove_member(str(group_id), user_id):
         return jsonify({"error": "user is not a member of this group"}), 404
     group = store.get(str(group_id))
-    return jsonify({"ok": True, "group": group.to_dict() if group else None}), 200
+    return jsonify({"ok": True, "group": _with_display_names(group).to_dict() if group else None}), 200
 
 
 @bp.route("/groups/<uuid:group_id>/agents", methods=["PUT"])
@@ -245,7 +280,16 @@ def group_set_agents(group_id: UUID):
     if not isinstance(agent_names, list):
         return jsonify({"error": "agent_names must be a list"}), 400
     installed = _installed_agents()
-    names = [str(a) for a in agent_names if str(a) in installed]
+    # The roster stores the KEY. A client may send the display name
+    # (that is what the chat shows), so resolve it -- otherwise the
+    # agent is silently dropped from the roster.
+    from app.routes.agent_lookup import resolve_agent
+    names = []
+    for a in agent_names:
+        text = str(a)
+        key = resolve_agent(text) or (text if text in installed else None)
+        if key and key not in names:
+            names.append(key)
     store = _store()
     if store.get(str(group_id)) is None:
         return jsonify({"error": "group not found"}), 404
