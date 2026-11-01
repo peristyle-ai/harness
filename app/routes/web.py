@@ -9,6 +9,7 @@ import logging
 from flask import Blueprint, current_app, jsonify, render_template, request, redirect, url_for, session
 
 from app.auth import current_user, load_user
+from app.routes.agent_lookup import agent_display_name, resolve_agent
 
 log = logging.getLogger(__name__)
 
@@ -48,8 +49,23 @@ def index():
 
 @bp.route("/c/<entity>")
 def entity_chat(entity: str):
-    """Per-entity chat UI. Renders chat.html with the entity name."""
-    return render_template("chat.html", entity=entity)
+    """Per-entity chat UI. Renders chat.html with the entity name.
+
+    The URL segment may be the agent's KEY ('example') or its DISPLAY
+    NAME ('EXAMPLE'). Either way the page is rendered for the key -- the
+    API calls the page makes are keyed by it -- and the header shows
+    the display name. A display-name URL is redirected to the canonical
+    key URL, so the address bar and the API agree.
+    """
+    key = resolve_agent(entity)
+    if key is None:
+        from flask import abort
+        abort(404)
+    if key != entity:
+        return redirect(url_for("web.entity_chat", entity=key))
+    return render_template(
+        "chat.html", entity=key, display_name=agent_display_name(key)
+    )
 
 
 @bp.route("/g/<uuid:group_id>")

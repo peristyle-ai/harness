@@ -1453,6 +1453,11 @@ class MemoryAPI:
         Returns one row per installed agent with: name, last_message,
         last_role, last_at, turn_count, conversation_id. The HMI renders
         this as the Telegram-style entity list.
+
+        'name' is the agent's KEY (the identifier: the schema, the API
+        path, the config). 'display_name' is the LABEL it shows -- the
+        name the agent calls itself, from its IDENTITY.md. The HMI
+        renders the label and links with the key.
         """
         # The agents are stored in app.agents (config), not in the DB.
         # For each, we query its own schema for the latest activity.
@@ -1460,6 +1465,7 @@ class MemoryAPI:
         cfg = current_app.config["HARNESS_CONFIG_OBJ"]
         registry = current_app.extensions["harness"].get("bootstrap_registry")
         names = registry.list_agents() if registry else list(cfg.app.agents)
+        display_names = registry.display_names() if registry else {}
         out: list[dict] = []
         for name in names:
             try:
@@ -1482,7 +1488,9 @@ class MemoryAPI:
                         conv = cur.fetchone()
                         if not conv:
                             out.append({
-                                "name": name, "last_message": None, "last_role": None,
+                                "name": name,
+                                "display_name": display_names.get(name) or name,
+                                "last_message": None, "last_role": None,
                                 "last_at": None, "turn_count": 0, "conversation_id": None,
                             })
                             continue
@@ -1508,6 +1516,7 @@ class MemoryAPI:
                 last_at = (last[2] if last else updated_at)
                 out.append({
                     "name": name,
+                    "display_name": display_names.get(name) or name,
                     "last_message": (last_content[:140] + ("…" if last_content and len(last_content) > 140 else "")) if last_content else None,
                     "last_role": last_role,
                     "last_at": last_at.isoformat() if last_at else None,
@@ -1521,7 +1530,9 @@ class MemoryAPI:
                     "list_entities_with_activity: agent=%s skipped: %s", name, e,
                 )
                 out.append({
-                    "name": name, "last_message": None, "last_role": None,
+                    "name": name,
+                    "display_name": display_names.get(name) or name,
+                    "last_message": None, "last_role": None,
                     "last_at": None, "turn_count": 0, "conversation_id": None,
                     "error": str(e),
                 })

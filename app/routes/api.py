@@ -27,6 +27,13 @@ bp = Blueprint("api", __name__, url_prefix="/api/v1")
 from app.auth import login_required_json, current_user  # noqa: E402
 from app.agent import turn_guard  # noqa: E402
 from app.paths import LOG_DIR
+from app.routes.agent_lookup import canonicalise_agent_name, resolve_agent  # noqa: E402
+
+
+@bp.before_request
+def _canonicalise_agent_name():
+    """Rewrite an entity path segment from the display name to the key."""
+    canonicalise_agent_name()
 
 
 # Phase 10: image upload allowlist. Keep tight — anything outside
@@ -1396,9 +1403,14 @@ def _agent_exists(name: str) -> bool:
     ext = current_app.extensions["harness"]
     registry = ext.get("bootstrap_registry")
     if registry is not None:
-        return name in registry.list_agents()
-    cfg = current_app.config["HARNESS_CONFIG_OBJ"]
-    return name in (cfg.app.agents or ())
+        if name in registry.list_agents():
+            return True
+    else:
+        cfg = current_app.config["HARNESS_CONFIG_OBJ"]
+        if name in (cfg.app.agents or ()):
+            return True
+    # The display name ('EXAMPLE') resolves to the same agent as the key.
+    return resolve_agent(name) is not None
 
 
 
@@ -1553,13 +1565,23 @@ def entity_icon_get(name: str):
         return jsonify({"error": "invalid entity name"}), 400
     ext = current_app.extensions["harness"]
     pool = ext["pool"]
+    # An icon uploaded before the agent was renamed is still filed under
+    # the old name, so try that too.
+    candidates = [name]
+    original = getattr(g, "original_entity_name", None)
+    if original and original != name:
+        candidates.append(original)
+    row = None
     with pool.connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT filename, mime FROM public.entity_icons WHERE entity_name = %s",
-                (name,),
-            )
-            row = cur.fetchone()
+            for candidate in candidates:
+                cur.execute(
+                    "SELECT filename, mime FROM public.entity_icons WHERE entity_name = %s",
+                    (candidate,),
+                )
+                row = cur.fetchone()
+                if row:
+                    break
     if not row:
         return jsonify({"error": "no icon"}), 404
     filename, mime = row[0], row[1]

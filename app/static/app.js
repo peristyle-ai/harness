@@ -382,14 +382,18 @@
     for (const e of list) {
       const row = document.createElement('a');
       row.className = 'entity-row';
+      // The link carries the KEY (the identifier: the API path, the
+      // schema). The LABEL is what the agent calls itself -- it is what
+      // the row shows.
       row.href = '/c/' + encodeURIComponent(e.name);
+      const label = e.display_name || e.name;
       const preview = e.last_message ? escapeHtml(e.last_message) : (e.turn_count ? '(no messages yet)' : 'Start a conversation');
       const time = fmtTimeAgo(e.last_at);
       // Inline change-image: a small file input that uploads on change
       row.innerHTML = `
         ${entityIconHTML(e.name, 44, e.icon_url)}
         <div class="meta">
-          <div class="name">${escapeHtml(e.name)}</div>
+          <div class="name">${escapeHtml(label)}</div>
           <div class="preview">${preview}</div>
         </div>
         <div class="time">${time}</div>

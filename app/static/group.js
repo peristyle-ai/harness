@@ -202,6 +202,15 @@
   // --- group + transcript -------------------------------------------------
   let group = null;
 
+  // agent key -> the name it displays (the group payload carries it).
+  // The KEY is what the roster stores and what the API path takes; the
+  // LABEL is what the agent calls itself.
+  let displayNames = {};
+
+  function labelFor(agent) {
+    return displayNames[agent] || agent;
+  }
+
   async function loadGroup() {
     if (!groupId) return;
     try {
@@ -216,6 +225,7 @@
           icon.style.background = c;
           icon.textContent = (group.name[0] || '?').toUpperCase();
         }
+        displayNames = group.display_names || {};
         renderMentionChips(group.agents || []);
       }
     } catch (e) {
@@ -235,7 +245,7 @@
       b.type = 'button';
       b.className = 'mention-chip';
       b.dataset.agent = a;
-      b.innerHTML = agentIconHTML(a, 18) + '<span>@' + escapeHtml(a) + '</span>';
+      b.innerHTML = agentIconHTML(a, 18) + '<span>@' + escapeHtml(labelFor(a)) + '</span>';
       b.addEventListener('click', () => insertMention(a));
       chips.appendChild(b);
     }
@@ -320,7 +330,7 @@
     div.className = 'gmsg gmsg-agent';
     div.innerHTML =
       '<div class="gmsg-meta">' + agentIconHTML(agent || '?', 18) +
-      '<span class="gmsg-name">' + escapeHtml(agent || 'agent') + '</span>' +
+      '<span class="gmsg-name">' + escapeHtml(agent ? labelFor(agent) : 'agent') + '</span>' +
       (iso ? ' · ' + escapeHtml(fmtTime(iso)) : '') + '</div>' +
       '<div class="gmsg-body">' + renderMarkdown(text || '') + '</div>';
     return div;

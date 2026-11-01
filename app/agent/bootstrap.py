@@ -17,6 +17,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from app.agent.names import display_name_from_identity
+
 log = logging.getLogger(__name__)
 
 
@@ -59,6 +61,21 @@ class BootstrapLoader:
             "bootstrap: loaded %d file(s) from %s (behavior_on_overflow=%s)",
             len(self._contents), self.workspace_root, self.behavior,
         )
+
+    def display_name(self) -> str | None:
+        """The name this agent calls itself, from its IDENTITY.md.
+
+        The '**Name:** EXAMPLE' line. None when the identity file does
+        not declare one -- the UI then shows the agent's key.
+
+        This is a LABEL. It never reaches SQL.
+        """
+        for file_name, content in self._contents.items():
+            if file_name.upper().endswith("IDENTITY.MD"):
+                found = display_name_from_identity(content)
+                if found:
+                    return found
+        return None
 
     def file_usage(self) -> list[dict]:
         """Per-file bytes vs cap, for the prompt-pressure check.
@@ -285,6 +302,27 @@ class BootstrapRegistry:
 
     def list_agents(self) -> list[str]:
         return list(self._agent_order)
+
+    def display_names(self) -> dict[str, str]:
+        """agent key -> the name it displays in the UI.
+
+        Only the agents that declare one appear; the caller falls back
+        to the key for the others. A broken identity file must not
+        take the UI down with it, so it is logged and skipped.
+        """
+        out: dict[str, str] = {}
+        for key, loader in self._loaders.items():
+            try:
+                found = loader.display_name()
+            except Exception as e:
+                log.error(
+                    "bootstrap_registry: display name for %s failed: %s: %s",
+                    key, type(e).__name__, e,
+                )
+                continue
+            if found:
+                out[key] = found
+        return out
 
     def reload_all(self) -> None:
         """Re-read every loader's files. Used after operator edits."""

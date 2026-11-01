@@ -60,6 +60,9 @@ class Group:
     # Populated by the store when it loads the group.
     members: list[dict] = field(default_factory=list)
     agents: list[str] = field(default_factory=list)
+    # agent key -> the name it displays in the UI. The roster keeps the
+    # KEY; the HMI renders the label.
+    display_names: dict[str, str] = field(default_factory=dict)
     last_message: str | None = None
     last_at: datetime | None = None
     message_count: int = 0
@@ -78,6 +81,7 @@ class Group:
             "archived_at": self.archived_at.isoformat() if self.archived_at else None,
             "members": self.members,
             "agents": self.agents,
+            "display_names": self.display_names,
             "last_message": self.last_message,
             "last_at": self.last_at.isoformat() if self.last_at else None,
             "message_count": self.message_count,
