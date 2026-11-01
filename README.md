@@ -257,3 +257,5 @@ Versions and licences are in
 ## License
 
 MIT — see [LICENSE](./LICENSE). Copyright (c) 2026 Peristyle.
+
+# probe
