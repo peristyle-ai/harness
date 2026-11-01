@@ -16,7 +16,14 @@
 // Second bump the same day: the toggle was hidden for EVERYONE because the
 // admin check ran while currentUser was still null (the auth check is
 // asynchronous). The fix has to reach the installed PWAs too.
-const CACHE_NAME = 'harness-v11';
+// 2026-11-01 (bump for the group chat stream parity): the group chat
+// client gained the thought stream and the tool-call trace, and the
+// stylesheet grew the rules that render them. The service worker is
+// CACHE-FIRST for the static shell, so an installed PWA would keep
+// serving the old group.js and app.css -- the fix would look like it
+// had not worked. Bumping the name forces a re-precache of the
+// current bundle.
+const CACHE_NAME = 'harness-v12';
 const PRECACHE = [
   '/',
   '/static/app.css',

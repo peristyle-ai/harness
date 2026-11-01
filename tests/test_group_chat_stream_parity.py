@@ -252,3 +252,64 @@ def test_the_group_client_is_valid_javascript():
     assert proc.returncode == 0, (
         "group.js must parse: %s" % (proc.stderr.strip() or proc.stdout.strip())
     )
+
+
+# --- the service worker must not keep serving the old bundle ---------------
+
+def test_the_service_worker_precaches_every_static_asset_the_chat_loads():
+    """An asset missing from PRECACHE is an asset an installed PWA never
+    gets: the service worker is cache-first, so it would serve whatever
+    the OLD bundle had for that path."""
+    sw = (REPO / "app" / "static" / "sw.js").read_text()
+    for asset in ("/static/app.css", "/static/app.js", "/static/group.js"):
+        assert asset in sw, (
+            "sw.js must precache %s -- it is the shell the chat pages "
+            "load, and a missing entry means an installed PWA serves the "
+            "stale copy" % asset
+        )
+
+
+def test_the_service_worker_cache_was_bumped_with_the_bundle():
+    """The static bundle changed in this change, so the cache name must
+    have changed with it.
+
+    The service worker is cache-first: a browser that already installed
+    it keeps serving the OLD app.js/group.js/app.css until the cache
+    name changes. A changed bundle with an unchanged cache name reaches
+    nobody.
+
+    The check is on THIS change's range: the files this commit touched
+    (the first parent is the base of the branch in CI, and the base of
+    the branch locally) and the cache name in each tree.
+    """
+    import subprocess
+
+    def _git(*args):
+        return subprocess.run(
+            ["git", "-C", str(REPO)] + list(args),
+            capture_output=True, text=True,
+        ).stdout.strip()
+
+    # The range of THIS change: from the base of the branch to its head.
+    # In CI the checkout is the merge commit, whose first parent is the
+    # base; locally it is the merge-base with main. Either way the range
+    # covers every commit of the change, not just the last one.
+    base = _git("merge-base", "HEAD", "origin/main") or "HEAD^"
+    changed = _git("diff", "--name-only", base, "HEAD").splitlines()
+    bundle = {"app/static/app.js", "app/static/group.js", "app/static/app.css"}
+    if not bundle.intersection(changed):
+        return  # this change does not touch the static bundle
+
+    def _cache_name(text):
+        m = re.search(r"CACHE_NAME\s*=\s*'([^']+)'", text)
+        assert m, "sw.js must declare a CACHE_NAME"
+        return m.group(1)
+
+    old = _cache_name(_git("show", "%s:app/static/sw.js" % base))
+    new = _cache_name((REPO / "app" / "static" / "sw.js").read_text())
+    assert new != old, (
+        "the static bundle changed in this change (%s) but the service "
+        "worker cache name did not (%s). The service worker is "
+        "cache-first, so the new bundle would never reach an installed "
+        "PWA." % (", ".join(sorted(bundle.intersection(changed))), old)
+    )

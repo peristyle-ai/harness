@@ -79,3 +79,20 @@ group chat.
 The server-side test is a behavioural one: it runs `run_group_message`
 with a fake loop and asserts the thought event comes through tagged with
 its agent.
+## The service worker cache
+
+`app/static/sw.js` is CACHE-FIRST for the static shell: a browser that
+already installed it keeps serving the OLD `app.js`, `group.js` and
+`app.css` until the cache name changes. This change alters the bundle,
+so the cache name moves `harness-v11` -> `harness-v12`; without that,
+the fix would reach the server and never reach an installed PWA.
+
+`tests/test_group_chat_stream_parity.py` pins it: a change that touches
+the static bundle must change the cache name in the same change. That
+test was seen failing on the old code (`assert 'harness-v11' !=
+'harness-v11'`) and passes now. A second test pins that the service
+worker precaches every static asset the chat pages load.
+
+(The other open pull request, #8, bumps the cache to `harness-v13`, so
+the two bumps differ whichever order they are merged in: a change to
+`sw.js` makes the browser re-precache the current bundle.)
