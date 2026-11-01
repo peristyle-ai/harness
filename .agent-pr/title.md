@@ -1,1 +1,1 @@
-feat(agent): the display name is its own thing, not the key
+fix(llm): one adapter per agent, so one upstream reset cannot take another agent's turn down with it
