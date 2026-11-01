@@ -82,7 +82,8 @@ the agent's own directory (`identity/`, `docs/`, `scripts/`, `skills/`).
 `scripts/` is the operational toolkit (Python, git-tracked,
 runnable end-to-end). `skills/` is for things with a `SKILL.md` +
 recurring workflow + the right shape for `skills.read()`. Decide
-case-by-case and don't duplicate shared infra skills (local-email, create_timer) — those live in `../<agent>/skills/`.
+case-by-case and don't duplicate shared infra skills (local-email,
+create_timer) — those live in `../<agent>/skills/`.
 
 For recurring work, use the `create_timer` skill (it's in
 `../<agent>/skills/create_timer/`). It generates a `systemd --user`

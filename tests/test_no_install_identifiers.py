@@ -35,14 +35,22 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import identifier_rules as rules  # noqa: E402
 
 # --- trees that ship ------------------------------------------------------
-SOURCE_TREES = ("app", "scripts", "schema", "tools", "tests")
+#
+# ``agent_template/`` is in this list because it is TRACKED in this
+# repository: it is the identity template every install starts from, and
+# a reader of the public repository reads it.  The branch gate already
+# scans it -- it reads a whole tree -- and the working-tree guard did
+# not, so the two gates had different scopes.  A rule that only one of
+# them applies is a rule that is not enforced.
+SOURCE_TREES = ("app", "scripts", "schema", "tools", "tests", "agent_template")
 
 # --- repository-level documents that ship ---------------------------------
 DOC_FILES = ("README.md", "SECURITY.md", "CONTRIBUTING.md")
 
 WORKFLOW_TREE = ".github"
 
-TEXT_SUFFIXES = (".py", ".js", ".css", ".html", ".sh", ".yml", ".yaml", ".sql", ".md", ".txt")
+TEXT_SUFFIXES = (".py", ".js", ".css", ".html", ".sh", ".yml", ".yaml", ".sql", ".md", ".txt",
+                ".template")
 
 
 def _shipped_files():

@@ -57,12 +57,17 @@ The rules live here, once, because two copies of "the rules" is how
 they drift apart -- and a rule that only one of them applies is a
 rule that is not enforced.
 
-The tree check runs over the source tree, the tests and the
-repository's own documents (README, SECURITY, CONTRIBUTING, the
-workflows).  It does NOT run over ``pie/`` -- each agent's identity
-directory is its own repository and is gitignored -- nor over
-``agent_template/``, which is the per-install template written at
-install time.  Neither of those is in this repository.
+The tree check runs over the source tree, the tests, the identity
+template and the repository's own documents (README, SECURITY,
+CONTRIBUTING, the workflows).  It does NOT run over ``pie/`` -- each
+agent's identity directory is its own repository and is gitignored, so it
+is not in this repository.  ``agent_template/`` IS in this repository
+(it is tracked, and every install starts from it), so it is scanned.
+
+The branch gate reads a whole tree, so it scans everything in it; the
+working-tree guard lists the trees it reads.  The two scopes are kept
+the same on purpose: a rule that only one of them applies is a rule that
+is not enforced.
 
 WHAT THIS DOES NOT COVER, STATED PLAINLY
 -----------------------------------------

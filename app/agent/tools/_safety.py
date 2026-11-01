@@ -137,7 +137,7 @@ _DSN_LOCK = threading.Lock()
 # the config is the source of truth now.
 _HARNESS_DSN: str | None = None
 # The install's own database NAME. It is whatever the operator called it
-# (harness, polymed, ...), and the sql_query tool accepts it as a name
+# (harness, other, ...), and the sql_query tool accepts it as a name
 # for the install's database -- so the agent can ask for the database it
 # was told about, whatever it is called.
 _INSTALL_DB_NAME = "harness"

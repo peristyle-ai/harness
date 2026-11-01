@@ -1,1 +1,1 @@
-fix(bind): the default bind address is loopback, not a wildcard
+fix(repo): three identifiers the gates could not see

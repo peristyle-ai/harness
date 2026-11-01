@@ -1,34 +1,47 @@
-The harness is reached through a reverse proxy, and the proxy is what
-decides who may reach it: TLS termination in front, and the browser
-checks and the secure cookie behind it. A service that listens on a
-wildcard address is reachable on every interface the host has,
-including the ones the proxy is there to protect.
+The gates are good at the shapes they know: a mailbox, a path into a
+home directory, a switch to a named account, an agent name in an
+agent-name position. This change is about the three things that were in
+the tree and that neither gate could express.
 
-That is not a hypothetical here. The bind address used to fall back to
-a wildcard, so an install whose own configuration said a loopback
-address still listened on every interface -- the fallback silently won.
-The configuration was right and the service was wrong.
+WHAT WAS IN THE TREE
 
-WHAT CHANGES
+- A tenant's name, in a comment in production code. The comment was
+  explaining that the install's database can be called whatever the
+  operator called it, and it used one tenant's name as the example.
+- A tenant's name, in the identity template -- the tracked file every
+  install starts from, and therefore read by every reader of a public
+  repository.
+- A private LAN address, used as an example of an address that is not
+  loopback, in a test.
 
-- `run.sh` falls back to a loopback address. A wildcard is still
-  possible, and still a decision: an operator who wants it writes it
-  into `config.yaml` or exports `HARNESS_BIND`. What is gone is the
-  accident.
-- `tests/test_bind_default.py` (new) pins the property, so the default
-  cannot go back to being wrong by hand. It checks the fallback in
-  `run.sh`, the shipped `config.yaml.example`, the default in
-  `install.sh`, and the whole shipped tree for a line that configures a
-  wildcard bind. Prose may still discuss a wildcard -- this file's own
-  docstring does -- but no line of code may use one.
+WHY THE GATES DID NOT CATCH THEM
 
-THE RULE HAS BEEN SEEN FAILING
+- The first two are NAMES, not shapes. A rule that banned a name would
+  have to contain the name, and a list of names is itself the leak, so
+  the rule set cannot cover this class. It is caught by review, which is
+  what review is for.
+- The third is a private address in a test fixture. A rule for "a
+  private address" would match every address in every test, and it would
+  have to know the range to exclude. The example now uses the
+  documentation range, which is the correct thing for a public
+  repository to use as an example anyway.
 
-The test file includes a case that runs the wildcard rule over the
-wildcard it forbids and asserts that it fails, and the change was
-checked against the previous `run.sh`: two of the tests fail there and
-pass here. A rule set that quietly stopped matching would make every
-other assertion in the file pass, and that is the failure mode worth
-guarding against.
+THE SCOPE FIX
 
-The full suite passes with this change.
+The working-tree guard listed the trees it reads, and it did not list
+the identity template. The branch gate reads a whole tree, so it did
+scan it. The two gates therefore had different scopes, and a rule that
+only one of them applies is a rule that is not enforced -- which is
+exactly how the two drifted apart in the first place.
+
+The working-tree guard now reads the identity template as well. It is
+tracked in this repository and it ships to every install, so it was
+always in scope; it just was not in the list.
+
+WHAT ELSE CHANGED
+
+The scope note in the shared rules module said that the identity
+template is "not in this repository". It is in this repository. The
+note now says what is true.
+
+The full suite passes, and the secret scan is clean.
