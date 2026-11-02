@@ -103,7 +103,8 @@ _FORWARD_PROMISE_RE = re.compile(
     r"draw\w*|show\w*|print\w*|prepar\w+|implement\w*|patch\w*|deploy\w*|"
     r"merg\w*|commit\w*|set\s+up|add\w*|remov\w+|delet\w*|mov\w*|cop\w*|"
     r"appl\w+|install\w*|scan\w*|compar\w*|confirm\w*|doubl\w*|"
-    r"investigat\w+|diagnos\w+|debug\w*)\b",
+    r"investigat\w+|diagnos\w+|debug\w*|see\b|view\w*|gather\w*|collect\w*|"
+    r"grab\w*|change\w*|switch\w*|start\w*|stop\w*|sort\w*|extract\w*|measure\w*)\b",
     re.IGNORECASE,
 )
 
