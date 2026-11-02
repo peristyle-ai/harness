@@ -110,3 +110,38 @@ installed PWA.
   parameter, and `tests/test_trail_sql_runs.py` runs the service's own
   statement against a real database in both modes. It was seen failing
   on the old code: 5 failed, then 5 passed.
+
+## The empty chat, found and fixed before the merge
+
+While this PR sat open, the operator reported that Evie's chat history
+had gone: the page rendered, the header was right, and the transcript
+was empty. It was not the data, and it was not the session.
+
+**The cause.** `GET /api/v1/entities/<name>/turns` asks the MemoryAPI
+the route holds for an agent's persistent conversation -- and that
+MemoryAPI is the DEFAULT agent's (`"memory": default_memory`, marked
+back-compat in `app/extensions.py`). The statement for the turns
+listing was built from `self.agent_name`, the INSTANCE's schema, so it
+asked the default agent's `turns` table for the other agent's
+conversation id. It found nothing there: the response was
+`{"name":"evie","turns":[]}` -- HTTP 200, 27 bytes, no error, nothing
+in the log. Evie's 197 turns and Clawbie's history were in the
+database the whole time. Every agent except the default one rendered
+an empty chat.
+
+**The fix.** The schema belongs to the agent asked for, so it comes
+from the argument. The agent name is canonicalised and checked once
+for both statements -- it travels into SQL as a schema name. The NULL
+`user_id` is typed as well: the conversation lookup sent it untyped,
+and Postgres cannot infer the type of a NULL bind parameter.
+
+**The test that could not have caught it.** The statement test asked
+the instance's OWN agent, so the requested schema and the instance's
+schema were the same schema and the statement was always right. The
+new regression test asks for a DIFFERENT agent than the instance's.
+All 8 tests in `tests/test_trail_sql_runs.py` were seen failing on the
+old code.
+
+This is the same lesson as the trail's SQL, one level up: a test that
+proves a statement is valid SQL does not prove it asks the right
+question.
