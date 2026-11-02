@@ -47,9 +47,11 @@ database and on no wire. Two halves:
 It is opt-in because the raw trajectory is large: ~670 KB for one busy
 turn, almost all of it the thinking blocks, and the loop's own
 measurements put a turn's replayed thinking at 2.3 MB. Fifty of those
-is ~33 MB for one page load. The compact form is ~20 KB for the same
-50 turns, because Postgres computes it and the thinking blocks are never
-read.
+is ~33 MB for one page load. The compact form is computed by Postgres
+and never carries the thinking blocks. Measured on the conversation the
+operator was looking at (50 turns, 25 assistant): **129,533 bytes
+without the trail, 353,234 with it** -- so ~224 KB for 50 busy turns,
+against ~33 MB for the raw trajectories, and opt-in on top of that.
 
 **A turn that ends on a promise is not an answer** (was #12). The
 "intent without execution" nudge existed, but it was suppressed for the

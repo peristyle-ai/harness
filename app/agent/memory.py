@@ -1635,10 +1635,16 @@ class MemoryAPI:
         stored trajectory for one busy turn is ~670 KB, almost all of it
         the thinking blocks, and the loop's own measurements put a
         turn's replayed thinking at 2.3 MB. Fifty of those is ~33 MB for
-        one page load. The compact form -- one line of narration plus
-        the tool names per iteration -- is ~20 KB for the same 50 turns,
-        because it is computed by Postgres and never carries the raw
-        thinking blocks.
+        one page load.
+
+        The compact form -- one line of narration plus the tool names
+        per iteration -- is computed by Postgres and never carries the
+        raw thinking blocks. MEASURED on the production conversation
+        the operator was looking at (50 turns, 25 of them assistant):
+        129,533 bytes without the trail, 353,234 bytes with it. So the
+        trail costs ~224 KB for 50 BUSY turns, against ~33 MB for the
+        raw trajectories -- two orders of magnitude smaller, and opt-in
+        on top of that.
 
         The narration rows (model='thought-stream') are EXCLUDED (2026-10-25,
         per the operator). They used to be one row per iteration, which put 132 rows
