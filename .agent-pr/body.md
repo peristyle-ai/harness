@@ -1,49 +1,35 @@
-An adapter holds one `httpx.Client`, with one connection pool. On most
-installs **every agent shared that one client** — the registry was
-populated only for the agents listed in `llm.per_agent`, which was added
-for a per-agent *model* test and never for isolation.
+## What
 
-**A shared client is a shared failure domain.** When the upstream resets
-that connection, every stream in flight on it dies at the same moment. On
-2026-11-01 two agents on one install, sharing one client, both lost their
-turn on the same upstream reset — three milliseconds apart.
+The two identity templates now carry the rules that keep a public repository
+publishable: which repositories are public, the difference between EXTERNAL
+information (about the outside world) and INTERNAL information (ours), the
+five-step check before a push, and the rule that a commit identity is a NAME
+(attribution) and an ADDRESS (how you reach a person) - and only the first
+may be a person name.
 
-## What changes
+Every fresh install renders its agent identity from these two files, so this
+is the one place the rules are taught once and inherited everywhere.
 
-- **Every agent gets its own adapter** — and therefore its own client,
-  its own pool and its own connection. An upstream reset kills one
-  agent's turn, not all of them.
-- **`llm.per_agent` becomes a partial override.** It used to be a
-  complete `llm` block — every field repeated, `api_key` included — so
-  getting an isolated client meant copying the key once per agent, and
-  most installs just shared instead. Now an entry names only what
-  changes and inherits the rest:
+## The one change I made to the text
 
-  ```yaml
-  llm:
-    per_agent:
-      example:
-        model: some-other-model
-  ```
+The working copy this came from quoted two real mailboxes in the examples.
+One was a third party address, and it is not in the published history of this
+repository today - this pull request would have put it there. The other was a
+placeholder local part on a real domain.
 
-  No duplication, and no key copied per agent.
+Both are now placeholders. The lesson is unchanged and reads better for it: a
+repository that publishes the real address has published the person.
 
-- **A full block still loads unchanged.** Merging a complete block over
-  the global one yields the same values, so existing configs keep
-  working untouched.
+## Gates
 
-The cost is one socket and a pool per agent.
+- tests/test_no_install_identifiers.py: the mailbox rule failed on this file
+  before the change and passes after it (9 passed).
+- python -m pytest tests/ -q: 332 passed, 9 skipped. The 3 failures are
+  pre-existing on a pristine origin/main and are not in these files: two
+  assert the git signature resolver returns the name Harness Agent (it
+  returns the locally configured name), and one scans the whole local git
+  history, which includes branches that are not published.
+- scripts/check_no_secrets.py: clean over the working tree and the full
+  history.
 
-## Tests
-
-- two agents on one install get two different clients and two different
-  pools — with or without a config entry;
-- the partial override merges as documented, and does not mutate the
-  global block;
-- a full block still builds.
-
-## For the reviewer
-
-The change is generic and names no install. The installer drops
-`per_agent` for a single-agent install, which is still correct — and
-now for a different reason: every agent gets its own client either way.
+Not merged - the diff is for the operator to read.

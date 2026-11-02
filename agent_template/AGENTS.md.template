@@ -221,3 +221,70 @@ in this section. A sysadmin needs these:
 
 This is a starting point. Add your own conventions, style, and
 rules as you figure out what works.
+
+## What may go into a tracked file, and how you check it before you push
+
+The rule itself is in your `SOUL.md` — read it there. This is the part you
+execute, and the part that has actually failed here.
+
+**Your git identity.**
+
+    git config user.name  "Your Name"
+    git config user.email "peristyle-ai@users.noreply.github.com"
+
+The **name** is attribution — the operator reads the history to see which
+agent did which piece of work. The **address** must never be a personal
+mailbox: on a domain you control, a person's address is real and
+deliverable, and it goes into the published history. `a-person@example.com`
+is how this file spells it, because a repository that publishes the real
+address has published the person. `scripts/check_commit_identities.py` in the
+harness repository is the gate; it accepts the no-reply domain, a placeholder
+domain, or a role local part (`ops`, `hello`, `info`, `security`, …) and
+refuses anything else.
+
+**The check, in order, every time:**
+
+1. `git fetch origin main` — so you are comparing against the published tip.
+2. `git merge-base --is-ancestor origin/main HEAD` — if this fails, your
+   branch is BEHIND `main` and pushing it republishes whatever `main` has
+   since removed. Rebase or merge `main` first.
+3. `git diff origin/main...HEAD` — **read it**. All of it, not only the files
+   you remember editing. The name may be in a file that came back with the
+   branch.
+4. `git log origin/main..HEAD --format='%B'` — **read your commit messages**.
+   A real email address in a message is a real email address in the
+   repository. One recipient's address sat in the public history of
+   `peristyle-ai/mail` for three weeks because a commit message quoted it.
+5. `python scripts/check_no_secrets.py` — the floor, not the job. It sees
+   provider-format keys and password literals; it cannot see a person's name,
+   an internal hostname, or an address in a message.
+
+**What never goes in a tracked file, a commit message, or a branch name:** a
+customer's name or address; the recipient or sender of a real email; a
+personal mailbox; a credential, token or private key; an internal hostname
+or LAN address; another customer's data; a private URL; internal business
+logic. Describe the case instead of naming it — "a customer outside
+Australia" rather than the customer's name.
+
+**Which repositories are public** (so this applies at full strength):
+`peristyle-ai/mail`, `peristyle-ai/webmail`, `peristyle-ai/accounts`,
+`peristyle-ai/harness`. Everything else under `peristyle-ai/` is private —
+but a private repository is still not the place for another customer's data,
+and a repository that is private today may be public tomorrow.
+
+### What your commit identity says
+
+A commit identity is a **NAME** and an **ADDRESS**, and they are not the same
+kind of thing.
+
+- The **name** is **attribution** — the operator reads the history to see
+  which agent did which piece of work. Sign with your own name.
+- The **address** is how you **reach a person**, and a public repository must
+  not publish one. Every commit is signed with the repository's own no-reply
+  address: `peristyle-ai@users.noreply.github.com`.
+
+**Never set an install's git identity to a personal mailbox.**
+`scripts/check_commit_identities.py` in the harness repository is the gate: it
+accepts the no-reply domain, a placeholder domain, or a role local part
+(`ops`, `hello`, `info`, `security`, …) and refuses anything else. It never
+prints the identity it found.
