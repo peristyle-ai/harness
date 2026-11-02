@@ -1,76 +1,50 @@
-## The bug
+## What
 
-The "intent without execution" guard exists to catch the model that
-describes an action it never performs ("Resending the invoice.") and
-leaves it there as the answer. That failure mode is real and the guard
-is worth keeping.
+The context budget had one threshold. Past it, the harness dropped the OLDEST iterations of the turn out of the model's context, and the model carried on working with a trajectory it could no longer see -- fifty iterations, two hours, ending on a promise instead of an answer.
 
-But the guard keyed on a bare action verb ANYWHERE in the text
-(`_INTENT_RE`), and ordinary English is full of action verbs: "here is
-where I GOT to", "read-only check", "you can FIND the invoice".
+It now has two:
 
-Measured against one production conversation's 89 assistant answers, the
-old detector fired on **86 of the 89**.
+| threshold | value | what happens |
+|---|---|---|
+| `agent.context_window_tokens` | 600000 -> **800000** | the hard ceiling: past it, the oldest steps are dropped and the model is told its tail was truncated |
+| `agent.context_wrap_tokens` | **600000** (new) | the soft threshold: at it, the model is told, in the system prompt, to WRAP THE TURN UP |
 
-## What it cost
+## What "wrap up" means
 
-On 2026-11-02 an agent was asked to stop working and report where it
-had got to. It did exactly that, in twelve seconds:
+The notice spells it out, because a model told to "wrap up" will otherwise just say so and stop:
 
-    "I'm stopping. Here's exactly where I got to.
+1. write (or update) a **pinned** memory carrying the handoff -- the goal, what is DONE and the evidence, what is NOT done, and the exact next step;
+2. **report where it got to**, plainly, with the evidence;
+3. end with an **ordered plan** for finishing the task, each step concrete enough to execute without re-reading the conversation.
 
-     ## Where I got to
+A pinned memory is injected into every later prompt, including the next turn of this conversation. The context is not. That is the whole point: the handoff has to live somewhere the window cannot reach.
 
-     **Done and verified:** ..."
+## Two details
 
-The guard matched the word "got", told the agent it had narrated an
-action without performing it, and pushed it back into the work loop for
-another 45 iterations and forty minutes.
+- The wrap-up notice rides **last** in the system prompt, after the truncation notice -- it is the instruction the model has to act on now.
+- A turn that was told to wrap up gets the **wrap-up nudge**, not the "you said you would do X, now do it" nudge. The intent nudge would push the model straight back into the work loop it was told to leave.
 
-## The fix
+The model's thinking blocks are preserved on purpose: its own reasoning is the largest thing in the context, and for this model stripping it is not an option.
 
-An announcement of work has a shape, and the guard now looks for the
-shape instead of for a verb:
+## The numbers
 
-- a forward frame -- "let me check", "I'll send", "I'm going to
-  render", "I need to look";
-- or a bare progressive -- "Resending the invoice now.";
+- `context_window_tokens` 600000 -> 800000. The model's own window is 1,000,000 tokens; the old ceiling tripped at ~600k, which is where the harness started dropping the oldest iterations of a long turn.
+- The soft threshold sits below the hard one, so the wrap-up happens while there is still room to finish.
 
-and it is the LAST thing the turn says (a promise in an earlier
-sentence is the model thinking out loud, and the answer that follows it
-is the answer), and it is neither negated ("I will NOT push") nor
-gated on a consent-conditional ("say the word and I'll build it").
+## Tests
 
-The claim guard ("PDF rendered (3,988 bytes)") now looks at the
-CONVERSATION rather than only at the current turn: a claim of work
-done is only a fabrication if the work was never done, and the
-conversation's own tool output is the evidence. The memory API gains
-`conversation_ran_tool(conversation_id, tool_name=None)` for it; the
-loop asks for it dynamically, so a memory implementation without the
-method degrades to the old turn-scoped behaviour instead of raising.
+18 new tests in `tests/test_context_wrapup.py`, 17 of them seen failing on the old code (the 18th is a guard, which is a guard):
 
-## The evidence
+- the soft threshold fires, and only at or above it;
+- the notice asks for a pinned memory, a report, and a resume plan;
+- the hard ceiling still drops the oldest steps -- the soft threshold does not weaken it;
+- the wrap-up notice rides last in the system prompt;
+- a wrapped-up turn gets the wrap-up nudge; a normal turn still gets the intent nudge and the standard ones;
+- the shipped defaults are 800000 / 600000, and an explicit value is honoured;
+- **the wiring**: the real agent loop over a fake adapter that remembers what each call was given -- the notice is not in the first call's system prompt and IS in the next one's.
 
-Against the same 89 production answers:
+A config object that predates the new key degrades to "no wrap-up notice" rather than failing a live turn.
 
-| detector | fires on |
-|---|---|
-| the old bare-verb detector | 86 of 89 |
-| the new announcement detector | **3 of 89** -- and those three are exactly the turns that really did end on a promise |
+## Not merged
 
-## The tests
-
-`tests/test_loop_announcement_vs_report.py` (new) drives the real agent
-loop over a fake adapter -- no database, no model, no tool executed.
-
-Seen failing on the old code first: 5 failed, 5 passed. The five that
-failed are the ones that describe the new behaviour; the five that
-passed are the guards that have to keep working.
-
-`tests/test_loop_unfulfilled_promise.py` (the promise half) still
-passes unchanged: 8 passed.
-
-Full suite: 350 passed, 9 skipped, 3 pre-existing failures -- the
-signature resolver and the commit-identity gate read this install's git
-configuration and the local branch history, and fail identically on a
-pristine `main`.
+This waits for a code-owner review like every other pull request here.

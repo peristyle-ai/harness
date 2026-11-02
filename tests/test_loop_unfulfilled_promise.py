@@ -109,6 +109,7 @@ class _AgentConfig:
     max_unpins_per_turn = 10
     max_turn_seconds = 0
     context_window_tokens = 600_000
+    context_wrap_tokens = 600_000
     tool_output_head_chars = 4_000
     tool_output_tail_chars = 4_000
     max_concurrent_llm = 2

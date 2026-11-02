@@ -243,6 +243,25 @@ def _no_answer_nudge(thinking: str) -> str:
     )
 
 
+# Phase 15.12 (2026-11-02): the nudge for a turn that was told to WRAP UP
+# and did not. The intent nudge ("you said you would do X, now do it")
+# is the wrong signal here: the model is not supposed to do the work
+# any more, it is supposed to write the handoff and stop. So this nudge
+# asks for the wrap-up itself, in the order the notice gave.
+_NUDGE_WRAPUP_MESSAGE = (
+    "Your context budget for this turn is nearly spent, and you have "
+    "been told to wrap the turn up. Wrapping up means, in this order: "
+    "(1) write or update a PINNED memory (memory_write with pin=true, or "
+    "memory_pin on an existing one) that carries the handoff -- the goal, "
+    "what is done and the evidence for it, what is not done, and the "
+    "exact next step; (2) report where you got to, plainly, with the "
+    "evidence; (3) end with an ordered plan for finishing the task, each "
+    "step concrete enough to execute without re-reading this "
+    "conversation. A pinned memory is injected into every later prompt, "
+    "including the next turn of this conversation -- your context is "
+    "not. Do that now, with real tool_use blocks, and then stop."
+)
+
 _NUDGE_MESSAGE = (
     "Your last response did not include a structured `tool_use` content "
     "block, but it described a tool call in prose (or hallucinated a "
@@ -339,6 +358,9 @@ _END_WALL_CLOCK_CAP = "wall_clock_cap"  # the turn hit the wall-clock cap
 _END_FINAL_ANSWER = "final_answer"      # the model produced an answer
 _END_NO_ANSWER = "no_answer"            # the model ended with no answer
 _END_UNFULFILLED_PROMISE = "unfulfilled_promise"  # the model ended on a promise
+# Phase 15.12 (2026-11-02): the turn ended under the WRAP-UP notice --
+# the context budget ran low, the model was told to wrap up, and it did.
+_END_CONTEXT_WRAPUP = "context_wrapup"       # the turn ended on a wrap-up
 
 from .llm import BaseLLM
 from .llm.base import Message
@@ -818,6 +840,49 @@ class AgentLoop:
         return True
 
     @staticmethod
+    def _window_system_text(
+        system_base: str, window_notice: str, wrap_notice: str,
+    ) -> str:
+        """The system prompt with the window notices appended.
+
+        Two notices can apply at once: the TRUNCATION one (the tail of
+        the turn was dropped) and the WRAP-UP one (the budget ran low,
+        wrap the turn up). The wrap-up one goes LAST: it is the
+        instruction the model has to act on now.
+
+        Split out as a static method so the seam can be unit-tested
+        without the DB + adapter stack.
+        """
+        extra = "\n\n".join(
+            part for part in (window_notice, wrap_notice) if part
+        )
+        if not extra:
+            return system_base
+        return f"{system_base}\n\n{extra}"
+
+    @staticmethod
+    def _nudge_content(wrap_up: bool, intent_matches: bool, next_nudge_idx: int) -> str:
+        """Which nudge to send for a model that answered in prose.
+
+        Three cases (2026-11-02):
+
+          * the turn was told to WRAP UP -- the model is not supposed to
+            do more work, it is supposed to write the handoff and stop,
+            so the nudge asks for the wrap-up. The intent nudge ("you
+            said you would do X, now do it") would push it straight
+            back into the loop it was told to leave;
+          * the model announced work without doing it -- the intent
+            nudge;
+          * otherwise the standard narrate nudges, first one lenient,
+            then stricter.
+        """
+        if wrap_up:
+            return _NUDGE_WRAPUP_MESSAGE
+        if intent_matches:
+            return _NUDGE_INTENT_MESSAGE
+        return _NUDGE_MESSAGES.get(next_nudge_idx, _NUDGE_MESSAGE)
+
+    @staticmethod
     def _enforce_context_window(
         ctx_window, messages, live_start, live_groups, live_tokens, system_base,
     ):
@@ -996,6 +1061,13 @@ class AgentLoop:
             limit_tokens=self.config.agent.context_window_tokens,
             head_chars=self.config.agent.tool_output_head_chars,
             tail_chars=self.config.agent.tool_output_tail_chars,
+            # getattr, not a direct attribute: a config object that
+            # predates the key (an older loader, a test stub) must
+            # degrade to "no wrap-up notice", not fail the turn. The
+            # hard ceiling above still applies either way.
+            wrap_tokens=getattr(
+                self.config.agent, "context_wrap_tokens", 0,
+            ),
         )
         # Everything from here on is the LIVE turn (the messages above are
         # the system prompt + the replayed history, bounded separately).
@@ -1008,6 +1080,19 @@ class AgentLoop:
         live_tokens = 0
         system_base = messages[0].content if messages else ""
         window_notice = ""
+        # Phase 15.12 (2026-11-02): the WRAP-UP notice. The budget has a
+        # hard ceiling (the oldest steps of the turn are dropped from
+        # under the model) and a soft one (this): at the soft ceiling the
+        # model is told, in the SYSTEM prompt, to wrap the turn up in an
+        # orderly way -- write the handoff into a pinned memory, report
+        # where it got to, and emit the plan for finishing the task -- so
+        # the next turn can resume it. `wrap_up` latches for the rest of
+        # the turn: once the model has been told to stop, an answer that
+        # announces more work is a missing wrap-up, not a reason to send
+        # it back into the work loop.
+        wrap_notice = ""
+        wrap_up = False
+        system_extra = ""
         # Wall-clock cap for one turn (2026-10-25, per the operator: big turns are
         # fine, but a single turn must not run forever).
         max_turn_seconds = int(self.config.agent.max_turn_seconds or 0)
@@ -1374,18 +1459,9 @@ class AgentLoop:
                         # you'd do X, now actually do X" (vs the claim
                         # pattern's "you said you did X, but you
                         # didn't"). Same max-nudge cap (Phase 15.8).
-                        if intent_matches:
-                            nudge_content = _NUDGE_INTENT_MESSAGE
-                        else:
-                            # Phase 15.6: pick which nudge text to send this time.
-                            # First nudge is the standard 'use a real tool_use
-                            # block' reminder; second nudge is the stricter
-                            # 'prose claim of side effect is a visible lie'
-                            # message. After _MAX_NUDGES, we fall through
-                            # to 'take the text as the final answer'.
-                            nudge_content = _NUDGE_MESSAGES.get(
-                                next_nudge_idx, _NUDGE_MESSAGE
-                            )
+                        nudge_content = self._nudge_content(
+                            wrap_up, intent_matches, next_nudge_idx,
+                        )
                         messages.append(Message(
                             role="user",
                             content=nudge_content,
@@ -1415,7 +1491,10 @@ class AgentLoop:
                                 llm_calls, max_iters,
                             )
                         else:
-                            end_reason = _END_FINAL_ANSWER
+                            end_reason = (
+                                _END_CONTEXT_WRAPUP if wrap_up
+                                else _END_FINAL_ANSWER
+                            )
                     else:
                         # CASE B (2026-10-27): the model ended the turn
                         # with no text and no tool call. The minimax
@@ -1659,9 +1738,24 @@ class AgentLoop:
                     )
                     if notice and notice != window_notice:
                         window_notice = notice
+                    # The wrap-up notice rides with the truncation
+                    # notice: the system prompt carries whichever of the
+                    # two applies, and the wrap-up one LAST -- it is the
+                    # instruction the model has to act on now.
+                    wrap = ctx_window.wrap_notice(live_tokens)
+                    if wrap:
+                        wrap_notice = wrap
+                        wrap_up = True
+                    extra = "\n\n".join(
+                        part for part in (window_notice, wrap_notice) if part
+                    )
+                    if extra and extra != system_extra:
+                        system_extra = extra
                         messages[0] = Message(
                             role="system",
-                            content=f"{system_base}\n\n{window_notice}",
+                            content=self._window_system_text(
+                                system_base, window_notice, wrap_notice,
+                            ),
                         )
                 # --- mid-turn steering (2026-10-25, per the operator) --------------
                 # A user message that arrived while this turn was running
@@ -1707,8 +1801,9 @@ class AgentLoop:
                     )
                 turn_state.set_progress(final_text=final_text)
             log.info(
-                "agent_loop: turn ended (reason=%s, iters=%d/%d)",
-                end_reason, llm_calls, max_iters,
+                "agent_loop: turn ended (reason=%s, iters=%d/%d, "
+                "wrap_up=%s)",
+                end_reason, llm_calls, max_iters, wrap_up,
             )
 
             latency_ms = int((time.monotonic() - t0) * 1000)

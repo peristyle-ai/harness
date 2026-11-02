@@ -1,1 +1,1 @@
-fix(agent): tell an announcement of work from a report of work already done
+feat(agent): a long turn wraps up on purpose instead of losing its tail
