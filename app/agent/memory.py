@@ -100,7 +100,7 @@ class MemoryAPI:
     # of the trajectory (~670 KB for one busy turn) and they are the
     # model's private reasoning, not the narration.
     _TRAIL_EXPR = """
-        COALESCE(
+        CASE WHEN %s::boolean THEN COALESCE(
             (SELECT jsonb_agg(jsonb_build_object(
                         'i', it.ord - 1,
                         'text', left(it.val->>'assistant_text', 400),
@@ -125,6 +125,7 @@ class MemoryAPI:
                         COALESCE(it.val->'tool_calls', '[]'::jsonb)
                     ) > 0),
             '[]'::jsonb)
+        ELSE '[]'::jsonb END
     """
 
     # ---- read path -------------------------------------------------------
@@ -1583,6 +1584,26 @@ class MemoryAPI:
                 })
         return out
 
+    def _persistent_turns_sql(self) -> str:
+        """The statement for the persistent turns listing.
+
+        It is a method so that a test can run the EXACT statement the
+        service runs. An earlier version of the trail spliced the
+        column into this statement and left a bare "AS trail" behind
+        when the trail was not asked for -- a syntax error that no
+        source-reading test could see, that only a real database would
+        catch, and that reached production before it was caught.
+        """
+        return f"""
+            SELECT id, role, content, model, attachments, created_at,
+                   {self._TRAIL_EXPR} AS trail
+              FROM {self.agent_name}.turns
+             WHERE conversation_id = %s
+               AND model IS DISTINCT FROM 'thought-stream'
+             ORDER BY created_at DESC
+             LIMIT %s
+            """
+
     def list_turns_for_persistent(
         self,
         agent_name: str,
@@ -1661,17 +1682,19 @@ class MemoryAPI:
                 # take the model's text only: the thinking blocks are the
                 # model's private reasoning and the operator asked for
                 # the narration.
+                # ONE query, always the same shape. An earlier version
+                # spliced the trail column into the statement and left a
+                # bare "AS trail" behind when the trail was not asked
+                # for -- a syntax error that only a real database would
+                # catch, and that reached production. The column is now
+                # always there and the flag is a bind parameter, so the
+                # statement cannot be half-built. Postgres does not
+                # evaluate the THEN branch of a CASE it does not need, so
+                # the ordinary chat load does not pay for the trail.
                 cur.execute(
-                    f"""
-                    SELECT id, role, content, model, attachments, created_at,
-                           {self._TRAIL_EXPR if include_trail else ""} AS trail
-                      FROM {agent_name}.turns
-                     WHERE conversation_id = %s
-                       AND model IS DISTINCT FROM 'thought-stream'
-                     ORDER BY created_at DESC
-                     LIMIT %s
-                    """,
-                    (conv_id, max(1, min(int(limit), 200))),
+                    self._persistent_turns_sql(),
+                    (bool(include_trail), conv_id,
+                     max(1, min(int(limit), 200))),
                 )
                 rows = cur.fetchall()
         import json as _json

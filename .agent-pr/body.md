@@ -98,3 +98,13 @@ installed PWA.
 - `public-ref-scan` / `identity-scan`: clean.
 - The new test file was **seen failing first**: 8 failed / 4 passed on
   the old code, and 4 of those 4 are the guards that must keep working.
+- The trail's SQL is proved by a **database** test, not by reading the
+  source. That is not decoration: the first version of this built the
+  statement by splicing a column into it, and with the trail off that
+  left a bare `AS trail` -- a syntax error. Every source-reading test
+  passed; it reached production, and the only thing that caught it was
+  calling the deployed code against the production database. The
+  statement is now one shape, always, with the flag as a bind
+  parameter, and `tests/test_trail_sql_runs.py` runs the service's own
+  statement against a real database in both modes. It was seen failing
+  on the old code: 5 failed, then 5 passed.
