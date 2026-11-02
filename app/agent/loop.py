@@ -89,6 +89,45 @@ _INTENT_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# A promise of work NOT YET DONE, in the form the model actually uses:
+# "let me check", "I'll verify", "I'm going to render". The marker has to
+# be followed closely by the action verb, so a closing offer ("let me know
+# if you want it in the other currency") is not a promise.
+_FORWARD_PROMISE_RE = re.compile(
+    r"\b(?:let\s+me|i'?ll|i\s+will|i'?m\s+going\s+to|i\s+am\s+going\s+to|"
+    r"going\s+to)\b(?:\s+\w+){0,2}\s+"
+    r"\b(?:check\w*|verif\w+|read\w*|inspect\w*|look\w*|render\w*|build\w*|"
+    r"creat\w+|writ\w+|updat\w+|fix\w*|run\w*|fetch\w*|search\w*|test\w*|"
+    r"review\w*|open\w*|generat\w+|send\w*|attach\w*|sav\w+|list\w*|"
+    r"quer\w+|comput\w+|find\w*|pull\w*|push\w*|post\w*|get\w*|mak\w+|"
+    r"draw\w*|show\w*|print\w*|prepar\w+|implement\w*|patch\w*|deploy\w*|"
+    r"merg\w*|commit\w*|set\s+up|add\w*|remov\w+|delet\w*|mov\w*|cop\w*|"
+    r"appl\w+|install\w*|scan\w*|compar\w*|confirm\w*|doubl\w*|"
+    r"investigat\w+|diagnos\w+|debug\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def _ends_on_a_promise(text: str) -> bool:
+    """Does the turn END on a promise of work not yet done?
+
+    A report of work already done ("I checked it, it is correct") is an
+    answer. A promise of work not yet done ("let me check it") is not --
+    and if the model says it will do something, the harness has to see
+    the tool call that does it.
+
+    Only the LAST sentence counts: a promise in an earlier sentence is
+    the model thinking out loud, and the answer that follows it is the
+    answer.
+    """
+    if not text:
+        return False
+    parts = [p for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p.strip()]
+    if not parts:
+        return False
+    return bool(_FORWARD_PROMISE_RE.search(parts[-1]))
+
+
 # Phase 15.9: intent-without-execution nudge message.
 # Different from the existing narrate-nudges because the
 # failure mode is different: the model said "I will do X"
@@ -216,6 +255,7 @@ _END_ITERATION_CAP = "iteration_cap"    # the loop ran out of iterations
 _END_WALL_CLOCK_CAP = "wall_clock_cap"  # the turn hit the wall-clock cap
 _END_FINAL_ANSWER = "final_answer"      # the model produced an answer
 _END_NO_ANSWER = "no_answer"            # the model ended with no answer
+_END_UNFULFILLED_PROMISE = "unfulfilled_promise"  # the model ended on a promise
 
 from .llm import BaseLLM
 from .llm.base import Message
@@ -583,6 +623,30 @@ class AgentLoop:
             "text and no tool call, so this was NOT an iteration-cap "
             f"problem ({used}). Ask me to continue and I will pick the "
             "thread up where it stopped."
+        )
+
+    @classmethod
+    def _unfulfilled_promise_text(
+        cls, text: str, *, iterations_used: int, max_iters: int
+    ) -> str:
+        """The turn ended on a promise the model never kept.
+
+        The model announced work it had not done ("let me check the
+        totals") and issued no tool call, so the turn produced no
+        answer. The nudges ran out before the model executed the
+        promise, and the promise is what is left.
+
+        The message says what happened, how many iterations the turn
+        used, and keeps the model's own words -- the work is not thrown
+        away.
+        """
+        used = f"{iterations_used} of the {max_iters} allowed tool iterations"
+        return (
+            "The model ended this turn on an unfulfilled promise: it "
+            "announced work it had not done (a \"let me check\" with no "
+            "tool call), and that was NOT an iteration-cap problem "
+            f"({used}). Its last output is below.\n\n"
+            f"{text}"
         )
 
     @classmethod
@@ -1057,6 +1121,14 @@ class AgentLoop:
                     # properly on the next iteration. Capped at _MAX_NUDGES
                     # so we don't loop forever.
                     text = response.text or ""
+                    # A turn that ENDS on a promise of work not yet done is
+                    # not an answer, whatever ran before it (2026-11-02):
+                    # the intent-nudge below is suppressed for the whole
+                    # turn once any earlier iteration landed a tool result,
+                    # so a model that has been working for 50 iterations can
+                    # end on "let me check one last fact" and have that
+                    # promise taken for the answer.
+                    promise = _ends_on_a_promise(text)
                     # Phase 15.6.2 (2026-10-18): context-aware narrate
                     # detection. Two distinct failure modes need two
                     # different guards:
@@ -1132,15 +1204,28 @@ class AgentLoop:
                     next_nudge_idx = nudges_so_far + 1
                     # Apply the same broad guard (Phase 15.6.1) to the
                     # intent check.
-                    if intent_matches:
+                    if intent_matches or promise:
                         prev_successful_tool_intent = any(
                             it.get("tool_results") for it in emission_iters
                         )
-                        intent_narrates = not prev_successful_tool_intent
+                        # A promise is NOT suppressed by an earlier tool
+                        # result: the model announced work it has not
+                        # done, so the tool call that does it is still
+                        # missing. The suppression exists for the wrap-up
+                        # summary ("I sent it, it is attached"), which
+                        # reports work already done -- and a report is not
+                        # a promise.
+                        intent_narrates = (
+                            promise or not prev_successful_tool_intent
+                        )
+                        if promise:
+                            # Use the intent nudge: the model described an
+                            # action it did not perform.
+                            intent_matches = True
                     else:
                         intent_narrates = False
                     # Combine: narrate fires if EITHER pattern matched.
-                    narrates = narrates or intent_narrates
+                    narrates = narrates or intent_narrates or promise
                     if narrates and nudges_so_far < _MAX_NUDGES:
                         log.warning(
                             "agent_loop: model narrated a tool call in prose "
@@ -1190,7 +1275,24 @@ class AgentLoop:
                     # the final answer.
                     final_text = response.text
                     if final_text:
-                        end_reason = _END_FINAL_ANSWER
+                        if promise:
+                            # The nudges ran out and the model is still
+                            # promising work it has not done. Say that,
+                            # rather than present the promise as the
+                            # answer.
+                            end_reason = _END_UNFULFILLED_PROMISE
+                            final_text = self._unfulfilled_promise_text(
+                                final_text, iterations_used=llm_calls,
+                                max_iters=max_iters,
+                            )
+                            log.warning(
+                                "agent_loop: the model ended the turn on an "
+                                "unfulfilled promise (no tool call) after "
+                                "%d/%d iterations",
+                                llm_calls, max_iters,
+                            )
+                        else:
+                            end_reason = _END_FINAL_ANSWER
                     else:
                         # CASE B (2026-10-27): the model ended the turn
                         # with no text and no tool call. The minimax
