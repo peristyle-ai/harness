@@ -16,7 +16,14 @@
 // Second bump the same day: the toggle was hidden for EVERYONE because the
 // admin check ran while currentUser was still null (the auth check is
 // asynchronous). The fix has to reach the installed PWAs too.
-const CACHE_NAME = 'harness-v11';
+// 2026-11-02 (bump for the batched chat bundle): three bundle changes
+// that used to be separate pull requests -- the group chat stream parity,
+// the collapsed-by-default trace, and the live status line -- now ship
+// as ONE bundle, so they share ONE cache name: harness-v15. The three
+// names they claimed separately (harness-v12, v13, v14) are gone, because
+// two changes that land on the same cache name would mean the second one
+// never reaches an installed PWA, and a batch is a single re-precache.
+const CACHE_NAME = 'harness-v15';
 const PRECACHE = [
   '/',
   '/static/app.css',

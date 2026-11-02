@@ -603,7 +603,13 @@
     if (page !== 'chat' || !entity) { console.log('[harness] loadTurns skipped'); return; }
     console.log('[harness] loadTurns: fetching turns for', entity);
     try {
-      const r = await api('/api/v1/entities/' + encodeURIComponent(entity) + '/turns?limit=50');
+      // trail=1: the thought stream and the tool-call trace of a
+      // FINISHED turn. The trail is compact (one narration line plus
+      // the tool names per iteration) and computed by the server from
+      // the stored trajectory; without it a persisted turn is the
+      // answer and nothing else (operator: "check on evie's session,
+      // I can't see the thought stream").
+      const r = await api('/api/v1/entities/' + encodeURIComponent(entity) + '/turns?limit=50&trail=1');
       const data = await r.json();
       console.log('[harness] loadTurns: got', (data.turns || []).length, 'turns');
       renderTurns((data.turns || []).slice().reverse());
@@ -824,7 +830,63 @@
     // textContent during typing (avoids flicker) and applies markdown
     // once the response is final — see the final-event handler below.
     const bodyHtml = t.role === 'assistant' ? renderMarkdown(t.content) : escapeHtml(t.content || '');
+    // The trail is the per-iteration narration and the tool calls of a
+    // FINISHED turn (server-computed from the stored trajectory). The
+    // live bubble has had this since 2026-10-25; a persisted turn had
+    // none, so the thought stream vanished the moment the turn ended.
+    const trail = (t.role === 'assistant' && Array.isArray(t.trail)) ? t.trail : [];
     div.innerHTML = `${bodyHtml}${attsHtml}<div class="meta">${t.role}${time ? ' · ' + time : ''}</div>`;
+    if (trail.length) {
+      // The tool-call trace and the thought stream, the same shape the
+      // live bubble has. Both start CLOSED (operator: "i would like the
+      // thought stream and tool call summarys to be collapsed by
+      // default"), and both say how much is inside, so a closed
+      // section is still informative.
+      const trace = document.createElement('details');
+      trace.className = 'trace';
+      const traceSummary = document.createElement('summary');
+      traceSummary.className = 'trace-summary';
+      const traceList = document.createElement('ol');
+      traceList.className = 'trace-list';
+      const thoughts = document.createElement('details');
+      thoughts.className = 'thoughts';
+      const thoughtSummary = document.createElement('summary');
+      thoughtSummary.className = 'thought-summary';
+      const thoughtLines = document.createElement('div');
+      thoughtLines.className = 'thought-lines';
+
+      let toolCount = 0;
+      let thoughtCount = 0;
+      for (const step of trail) {
+        const tools = Array.isArray(step && step.tools) ? step.tools : [];
+        for (const name of tools) {
+          const li = document.createElement('li');
+          li.className = 'trace-item ok';
+          li.textContent = '✓ ' + name;
+          traceList.appendChild(li);
+          toolCount += 1;
+        }
+        const text = (step && step.text) ? String(step.text).trim() : '';
+        if (text) {
+          const line = document.createElement('div');
+          line.className = 'thought-line';
+          line.textContent = text;
+          thoughtLines.appendChild(line);
+          thoughtCount += 1;
+        }
+      }
+      traceSummary.textContent = trail.length + ' iter · ' + toolCount +
+        ' tool call' + (toolCount === 1 ? '' : 's');
+      thoughtSummary.textContent = 'thought stream · ' + thoughtCount;
+      trace.appendChild(traceSummary);
+      trace.appendChild(traceList);
+      thoughts.appendChild(thoughtSummary);
+      thoughts.appendChild(thoughtLines);
+      div.appendChild(trace);
+      div.appendChild(thoughts);
+      trace.removeAttribute('open');
+      thoughts.removeAttribute('open');
+    }
     messages.appendChild(div);
     if (scroll !== false) requestAnimationFrame(() => { messages.scrollTop = messages.scrollHeight; });
   }
@@ -948,6 +1010,12 @@
       const liveBody = document.createElement('div');
       liveBody.className = 'live-body';
       liveBody.textContent = '…';
+      // The LIVE STATUS LINE: the model's latest thought, at the top of
+      // the bubble (2026-11-01, per the operator). The thought stream is
+      // collapsed by default, so this one line is what says what the
+      // agent is doing RIGHT NOW.
+      const liveStatus = document.createElement('div');
+      liveStatus.className = 'live-status';
       // The per-iteration thought trail (2026-10-25, per the operator): the model's
       // interim narration, one line per iteration. It is a COLLAPSIBLE
       // section (a <details>, exactly like the tool-call summary) and it
@@ -966,16 +1034,11 @@
       let thoughtCount = 0;
       const liveTrace = document.createElement('details');
       liveTrace.className = 'trace';
-      // For admin users, default the trace to OPEN so all
-      // thought-stream items (think / tool_start / tool_end / nudge)
-      // are visible during streaming too. The final-bubble
-      // transition below keeps it open for admin (non-admin gets
-      // collapsed at final time). This is the user-facing
-      // expression of "display the thought stream permanently".
-      if (currentUser && currentUser.role === 'admin') {
-        liveTrace.setAttribute('open', '');
-        liveThoughts.setAttribute('open', '');
-      }
+      // Both sections start CLOSED, for everyone (operator: "i would
+      // like the thought stream and tool call summarys to be collapsed
+      // by default"). They are <details>, so the content is one click
+      // away -- and the answer is the answer, not the machinery
+      // behind it.
       const liveSummary = document.createElement('summary');
       liveSummary.textContent = 'working...';
       const liveTraceList = document.createElement('ol');
@@ -985,6 +1048,7 @@
       const liveMeta = document.createElement('div');
       liveMeta.className = 'meta';
       liveMeta.textContent = 'assistant';
+      liveDiv.appendChild(liveStatus);
       liveDiv.appendChild(liveBody);
       liveDiv.appendChild(liveTrace);
       liveDiv.appendChild(liveThoughts);
@@ -1085,6 +1149,10 @@
             line.className = 'thought-line';
             line.textContent = ev.text || '';
             liveThoughtLines.appendChild(line);
+            // ... and the LATEST one also goes to the status line at the
+            // top of the bubble, so the working state is visible
+            // without opening the (collapsed) thought stream.
+            liveStatus.textContent = ev.text || '';
             thoughtCount += 1;
             liveThoughtsSummary.textContent = 'thought stream · ' + thoughtCount;
             requestAnimationFrame(() => { messagesEl.scrollTop = messagesEl.scrollHeight; });
@@ -1180,6 +1248,9 @@
       // the plain textContent (used during typing to avoid markdown
       // re-render flicker on every chunk) for the rendered HTML.
       liveBody.innerHTML = renderMarkdown(finalText);
+      // The answer has arrived; the "what is it doing right now" line
+      // goes with it.
+      liveStatus.remove();
       // Phase 15: render the final attachment list. The server
       // includes this in the `attachments` key on the final event
       // (Phase 15 addition). Prefer the server list over the
@@ -1194,41 +1265,20 @@
         // Ensure no stale chip from streaming remains
         Array.from(liveDiv.querySelectorAll(':scope > .attachments')).forEach(n => n.remove());
       }
-      // For admin users, keep the thought stream visible in the
-      // final bubble (no collapse, no max-height cap, keep the
-      // live-style summary text). For non-admins, collapse to a
-      // static 'N iter · M tool calls · Zs' summary as before.
-      const isAdmin = !!(currentUser && currentUser.role === 'admin');
-      if (isAdmin) {
-        // Drop the max-height cap so all trace items are scrollable
-        // (still inside the <details>, but defaults to open below).
-        liveTraceList.style.maxHeight = '';
-        // Keep the <details> open so the trace is visible by default.
-        liveTrace.setAttribute('open', '');
-        // Keep the live-style summary (the last iter label) rather
-        // than the static count. If we never got a tool_start or
-        // nudge event, fall back to a static count.
-        const liveSummaryText = liveSummary.textContent;
-        if (!liveSummaryText || liveSummaryText === 'working...' || liveSummaryText === 'iter ' + iters + '...') {
-          // already in a live-style form, leave it
-        } else if (liveSummaryText.includes('thinking')) {
-          // thinking... (iter N) — keep
-        } else {
-          // static count was set; re-set to the iter label
-          liveSummary.textContent = 'iter ' + iters + '...';
-        }
-      } else {
-        liveTraceList.style.maxHeight = '160px';
-        liveSummary.textContent = iters + ' iter · ' + traceItems + ' tool call' + (traceItems === 1 ? '' : 's') + ' · ' + (lat / 1000).toFixed(1) + 's';
-        liveTrace.removeAttribute('open');
-        liveThoughtLines.style.maxHeight = '160px';
-        liveThoughts.removeAttribute('open');
-      }
+      // The turn is over: the trace collapses into a static summary
+      // and both sections stay CLOSED, for everyone (operator: "i
+      // would like the thought stream and tool call summarys to be
+      // collapsed by default"). The summary still says what is in
+      // there, so a collapsed section is informative.
+      liveTraceList.style.maxHeight = '160px';
+      liveSummary.textContent = iters + ' iter · ' + traceItems + ' tool call' + (traceItems === 1 ? '' : 's') + ' · ' + (lat / 1000).toFixed(1) + 's';
+      liveTrace.removeAttribute('open');
+      liveThoughtLines.style.maxHeight = '160px';
+      liveThoughts.removeAttribute('open');
       // The thought section always states how many thoughts it holds.
       liveThoughtsSummary.textContent = 'thought stream · ' + thoughtCount;
       const time = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-      const adminMarker = isAdmin ? ' · admin view' : '';
-      liveMeta.textContent = 'assistant · ' + (finalEvent.model || '') + ' · ' + time + adminMarker;
+      liveMeta.textContent = 'assistant · ' + (finalEvent.model || '') + ' · ' + time;
     }
 
     // === Non-streaming fallback ========================================

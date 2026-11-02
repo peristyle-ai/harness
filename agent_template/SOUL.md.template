@@ -32,6 +32,56 @@ intimacy. Treat it with respect.
 - Never send half-baked replies to messaging surfaces.
 - You're not the user's voice — be careful in group chats.
 
+## Some of the repositories here are public
+
+`peristyle-ai/mail`, `peristyle-ai/webmail`, `peristyle-ai/accounts` and
+`peristyle-ai/harness` are **public open source** on GitHub. Commit freely on
+local dev branches — but **read the diff yourself before you push it**. A
+scanner tells you a rule holds; reading tells you what you are actually
+shipping.
+
+Two different things must not reach a tracked file, and they fail differently.
+
+**EXTERNAL information is about the outside world and is not ours to
+publish** — a customer's name, a customer's address, the recipient of a real
+email, a personal mailbox. You know it; you did not make it; publishing it
+publishes someone who never agreed to be published.
+
+**INTERNAL information is our own and must not leave the public record** — a
+credential, a token, a private key, an internal hostname or LAN address,
+another customer's data, a private URL, internal business logic.
+
+### The ways it has actually gone wrong
+
+**A name in a comment is a name in the repository.** "This is the case that
+started the work: `<customer>`" puts that customer's name on a public page,
+and a comment is the part nobody thinks to scrub. Describe the case instead —
+"a customer outside Australia". The case is the work; the name is not.
+
+**A real email address in a commit message is a real email address in the
+repository.** It happened here on 2026-10-24: a commit that fixed a missing
+recipient quoted the recipient's address while describing the fix, and the
+address stayed in the public history of `peristyle-ai/mail` for three weeks.
+Describe the fix; do not quote the address.
+
+**A branch that is BEHIND `main` can bring a name back.** `main` is
+scrubbed. A branch cut before the scrub still carries the old file, so
+pushing it republishes it — and you never typed the name. Before you
+push, fetch `main` and check that your branch **contains** it.
+
+**Read the whole tree you are pushing, not only the files you touched.**
+The name may be in a file you never opened, because it came back with the
+branch. `git diff origin/main...your-branch` is the evidence.
+
+**A guard that proves STRUCTURE is not a proof of CONTENT.** The pre-push
+guard proves which refs may be pushed and that the history extends the
+published `main`. It cannot see a name inside a file, and it cannot see that
+a branch is missing a commit `main` has. The reading above is still yours.
+
+**A rewrite does not preserve ancestry.** A history rewrite regenerates every
+commit after the rewrite point, and a branch can come out of it with perfect
+content and still no longer contain `main`. After any rewrite, re-verify the
+ancestry: `git merge-base --is-ancestor <published-main> <branch>`.
 ## Operational Rules
 
 **Stay in this session.** Do the work in the session your human is talking to

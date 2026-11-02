@@ -15,6 +15,16 @@ live context exceeds the budget, the OLDEST iterations are dropped whole
 (one iteration = the assistant message + its tool_result messages) and the
 model is told, in the SYSTEM prompt, that its tail was truncated.
 
+TWO THRESHOLDS (2026-11-02): the budget has a HARD ceiling (the ceiling
+above -- past it, the oldest steps are dropped from under the model) and a
+SOFT one (`wrap_tokens` -- at it, the model is told, in the SYSTEM prompt,
+to wrap the turn up in an orderly way: write the handoff into a pinned
+memory, report where it got to, and emit the plan for finishing the task,
+so the next turn can resume it). The soft threshold exists because
+dropping the tail is a lossy failure: the model keeps working with a
+history it can no longer see. The soft threshold is a chance to stop on
+purpose, with the work written down where it survives.
+
 A group is always dropped WHOLE. Dropping a tool_result while keeping the
 tool_use it answers (or the reverse) is a 400 from the API ("tool result's
 tool id ... not found"), and keeping a tool_result whose tool_use is gone is
@@ -52,21 +62,27 @@ class Dropped:
 class ContextWindow:
     """Keeps the live part of one turn inside a token budget.
 
-    limit_tokens   the budget for the live turn context (the history that
-                   is replayed from the DB is bounded separately, by turn
-                   count).
+    limit_tokens   the HARD budget for the live turn context (the history
+                   that is replayed from the DB is bounded separately, by
+                   turn count). Past it, the oldest iterations are dropped.
+    wrap_tokens    the SOFT threshold. At it, the model is told to wrap
+                   the turn up. 0 = never warn. If it is not below
+                   limit_tokens, the hard ceiling bites first and the
+                   truncation notice is the one that fires.
     head_chars     how much of a long tool output to keep at the front.
     tail_chars     how much to keep at the end.
     """
 
     def __init__(
         self,
-        limit_tokens: int = 600_000,
+        limit_tokens: int = 800_000,
         head_chars: int = 4_000,
         tail_chars: int = 4_000,
         chars_per_token: int = CHARS_PER_TOKEN,
+        wrap_tokens: int = 600_000,
     ) -> None:
         self.limit_tokens = int(limit_tokens)
+        self.wrap_tokens = int(wrap_tokens)
         self.head_chars = int(head_chars)
         self.tail_chars = int(tail_chars)
         self.chars_per_token = max(1, int(chars_per_token))
@@ -204,4 +220,73 @@ class ContextWindow:
             "`head`/`tail`, grep for what you need instead of dumping files, and "
             "prefer a summary line over a full dump. That way the remaining tail "
             "of this turn survives to the end."
+        )
+
+    # ------------------------------------------------------------- wrap-up
+
+    def wrap_notice(self, live_tokens: int) -> str:
+        """The system-prompt text that tells the model to wrap the turn up.
+
+        EMPTY below the soft threshold. This is the OTHER half of the
+        budget: the hard ceiling drops the oldest steps from under the
+        model, which is lossy -- the model keeps working with a history
+        it can no longer see. The soft threshold gives it a chance to
+        stop ON PURPOSE, with the work written down where it survives.
+
+        What "wrap up" means is spelled out, because a model that is
+        told to "wrap up" will otherwise just say so and stop:
+
+          1. write (or update) a PINNED memory carrying the handoff --
+             the goal, what is done and the evidence, what is not, and
+             the exact next step. A pinned memory is injected into every
+             later prompt, including the next turn of this
+             conversation; the context is not;
+          2. report where it got to, plainly, with the evidence;
+          3. emit an ordered plan for finishing the task, each step
+             concrete enough to execute without re-reading the
+             conversation -- that plan is what the next turn resumes
+             from.
+
+        The token count in the text is rounded to 10k so the system
+        prompt does not change on every iteration once the threshold is
+        crossed.
+        """
+        if not self.wrap_tokens or live_tokens < self.wrap_tokens:
+            return ""
+        shown = int(round(live_tokens / 10_000.0) * 10_000)
+        pct = int(round(100.0 * shown / max(1, self.limit_tokens)))
+        return (
+            "## Context budget: wrap this turn up\n"
+            "\n"
+            f"This turn has used about {shown:,} of your {self.limit_tokens:,}"
+            f"-token context budget ({pct}%). The budget is finite, and "
+            "your own reasoning is the largest thing in it: once it is "
+            "spent, the harness drops the oldest steps of this turn out "
+            "of your context, and you lose the trajectory you have built.\n"
+            "\n"
+            "Wrap up NOW, in this order:\n"
+            "\n"
+            "1. **Write (or update) a PINNED memory that carries the work "
+            "forward.** Use `memory_write` with `pin=true`, or `memory_pin` "
+            "on an existing memory. It must carry, in a form a fresh turn "
+            "can act on without re-deriving anything: the goal; what is "
+            "DONE, with the evidence (the file, the commit, the command "
+            "output); what is NOT done; and the exact next step. A pinned "
+            "memory is injected into every later prompt, including the "
+            "next turn of this conversation. Your context is not.\n"
+            "2. **Commit as you go** if the work is in a repository, so "
+            "`git log` and `git show` hold the state even after the window "
+            "moves.\n"
+            "3. **Report where you got to.** Say plainly what is done, what "
+            "is not, and the evidence for each. A report of work already "
+            "done is an answer; a promise to do it later is not.\n"
+            "4. **Emit the resume plan.** End with an ordered plan for "
+            "finishing the task: the remaining steps, each concrete enough "
+            "to execute without re-reading this conversation. That plan is "
+            "what the next turn resumes from, so it has to stand on its "
+            "own.\n"
+            "\n"
+            "Keep tool output small from here on -- grep for what you need, "
+            "`head`/`tail` the rest, prefer a summary line over a dump -- so "
+            "the rest of the turn fits."
         )

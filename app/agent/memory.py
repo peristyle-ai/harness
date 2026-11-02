@@ -82,6 +82,51 @@ class MemoryAPI:
         self.agent_name = agent_name
         self.config = config
 
+    # The compact per-iteration trail of a stored turn: the model's
+    # narration for the iteration and the names of the tools it called.
+    #
+    # It is a class attribute, not a local, for two reasons. It is a
+    # constant -- it carries no request data and never changes -- and
+    # the repo's own f-string-SQL gate (tests/test_security.py) only
+    # tolerates an interpolated SQL fragment that it can PROVE is
+    # constant: a `self.<attr>`, or a conditional whose two branches
+    # are string literals. A local variable is a bare name, and the gate
+    # rightly refuses to guess what a bare name holds.
+    #
+    # It reads the stored trajectory (the loop writes the per-iteration
+    # narration and the tool calls there) and returns only the compact
+    # form: one line of narration plus the tool names per iteration.
+    # The thinking blocks are deliberately NOT read -- they are the bulk
+    # of the trajectory (~670 KB for one busy turn) and they are the
+    # model's private reasoning, not the narration.
+    _TRAIL_EXPR = """
+        COALESCE(
+            (SELECT jsonb_agg(jsonb_build_object(
+                        'i', it.ord - 1,
+                        'text', left(it.val->>'assistant_text', 400),
+                        'tools', COALESCE(
+                            (SELECT jsonb_agg(tc->>'name')
+                               FROM jsonb_array_elements(
+                                    COALESCE(it.val->'tool_calls', '[]'::jsonb)
+                               ) AS tc),
+                            '[]'::jsonb)
+                    ) ORDER BY it.ord)
+               FROM jsonb_array_elements(
+                    COALESCE(trajectory->'iterations', '[]'::jsonb)
+               ) WITH ORDINALITY AS it(val, ord)
+              -- Only the iterations that CALLED A TOOL. The last
+              -- iteration of a turn is the answer itself, and the live
+              -- stream does not put it in the thought stream either: the
+              -- loop emits a 'thought' event only for an interim
+              -- iteration (one that called a tool). Without this filter
+              -- the persisted thought stream would show the answer a
+              -- second time, right underneath the answer.
+              WHERE jsonb_array_length(
+                        COALESCE(it.val->'tool_calls', '[]'::jsonb)
+                    ) > 0),
+            '[]'::jsonb)
+    """
+
     # ---- read path -------------------------------------------------------
 
     def search(
@@ -1543,6 +1588,7 @@ class MemoryAPI:
         agent_name: str,
         user_id: int | None = None,
         limit: int = 50,
+        include_trail: bool = False,
     ) -> list[dict]:
         """Last N turns of the persistent conversation for (agent, user).
 
@@ -1553,6 +1599,25 @@ class MemoryAPI:
         Group conversations are excluded (migration 014): a group chat
         owns its own conversation id, and a DM must never render the
         group's turns.
+
+        include_trail (2026-11-02, per the operator: "check on evie's
+        session, I can't see the thought stream"): when True, each
+        ASSISTANT row also carries a compact 'trail' -- the per-iteration
+        narration and the tool names, computed in SQL from the stored
+        trajectory. The thought stream used to be LIVE ONLY: the client
+        built it from the 'thought' event and it lived in the live
+        bubble's DOM, so a finished turn showed the answer and nothing
+        else. The narration was never lost -- the loop writes it into
+        turns.trajectory -- it was simply never on the wire.
+
+        It is OFF by default, and it has to stay off by default: the
+        stored trajectory for one busy turn is ~670 KB, almost all of it
+        the thinking blocks, and the loop's own measurements put a
+        turn's replayed thinking at 2.3 MB. Fifty of those is ~33 MB for
+        one page load. The compact form -- one line of narration plus
+        the tool names per iteration -- is ~20 KB for the same 50 turns,
+        because it is computed by Postgres and never carries the raw
+        thinking blocks.
 
         The narration rows (model='thought-stream') are EXCLUDED (2026-10-25,
         per the operator). They used to be one row per iteration, which put 132 rows
@@ -1578,9 +1643,28 @@ class MemoryAPI:
                 if not conv:
                     return []
                 conv_id = conv[0]
+                # The trail is the per-iteration narration and the tool
+                # names, read straight out of the stored trajectory.
+                #
+                # It is computed HERE, in Postgres, and not by pulling the
+                # trajectory into Python and slicing it there. The
+                # trajectory's bulk is the thinking blocks (~670 KB for
+                # one busy turn); a Python-side slice would put all of it
+                # on the wire before throwing it away, for every turn on
+                # the page.
+                #
+                # The narration is the model's OWN text for the
+                # iteration ('assistant_text'), which is exactly what the
+                # live 'thought' event carries -- the loop's
+                # _one_line_thought() prefers the model's text and falls
+                # back to the first sentence of the thinking block. We
+                # take the model's text only: the thinking blocks are the
+                # model's private reasoning and the operator asked for
+                # the narration.
                 cur.execute(
                     f"""
-                    SELECT id, role, content, model, attachments, created_at
+                    SELECT id, role, content, model, attachments, created_at,
+                           {self._TRAIL_EXPR if include_trail else ""} AS trail
                       FROM {agent_name}.turns
                      WHERE conversation_id = %s
                        AND model IS DISTINCT FROM 'thought-stream'
@@ -1602,11 +1686,22 @@ class MemoryAPI:
                     atts = []
             elif atts is None:
                 atts = []
-            out.append({
+            row = {
                 "id": r[0], "role": r[1], "content": r[2], "model": r[3],
                 "attachments": atts,
                 "created_at": r[5].isoformat() if r[5] else None,
-            })
+            }
+            if include_trail:
+                trail = r[6] if len(r) > 6 else None
+                if isinstance(trail, str):
+                    try:
+                        trail = _json.loads(trail)
+                    except Exception:
+                        trail = None
+                # Only an assistant turn has a narration. A user turn
+                # gets no trail at all -- there is nothing to show.
+                row["trail"] = trail if (r[1] == "assistant" and trail) else []
+            out.append(row)
         return out
 
     def load_recent_turns(self, conversation_id: UUID, limit: int = 20,
@@ -1647,6 +1742,65 @@ class MemoryAPI:
                 attachments=atts, created_at=r[8],
             ))
         return out
+
+    def conversation_ran_tool(
+        self, conversation_id: UUID, tool_name: str | None = None,
+    ) -> bool:
+        """Has this conversation run a tool in an EARLIER turn?
+
+        The narrate/claim guard needs the whole conversation, not just
+        the current turn: an agent that has been working for forty
+        iterations answers "here is where I got to" -- a report of work
+        already done -- and the harness must not treat that as a claim
+        it never performed. A claim is only a fabrication if the work
+        was never done, and the conversation's own tool output is the
+        evidence.
+
+        tool_name narrows the question to one tool ("did attach_file
+        run?"). None means any tool at all.
+        """
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                if tool_name:
+                    cur.execute(
+                        f"""
+                        SELECT EXISTS (
+                            SELECT 1
+                              FROM {self.agent_name}.turns t
+                              JOIN LATERAL jsonb_array_elements(
+                                       COALESCE(t.trajectory->'iterations',
+                                                '[]'::jsonb)) AS it
+                                   ON TRUE
+                              JOIN LATERAL jsonb_array_elements(
+                                       COALESCE(it->'tool_calls',
+                                                '[]'::jsonb)) AS tc
+                                   ON TRUE
+                             WHERE t.conversation_id = %s
+                               AND tc->>'name' = %s
+                        )
+                        """,
+                        (conversation_id, tool_name),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        SELECT EXISTS (
+                            SELECT 1
+                              FROM {self.agent_name}.turns t
+                              JOIN LATERAL jsonb_array_elements(
+                                       COALESCE(t.trajectory->'iterations',
+                                                '[]'::jsonb)) AS it
+                                   ON TRUE
+                             WHERE t.conversation_id = %s
+                               AND jsonb_array_length(
+                                       COALESCE(it->'tool_calls',
+                                                '[]'::jsonb)) > 0
+                        )
+                        """,
+                        (conversation_id,),
+                    )
+                row = cur.fetchone()
+                return bool(row and row[0])
 
     # ---- conversation listing / loading (UI) -----------------------
 

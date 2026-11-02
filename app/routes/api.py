@@ -1162,6 +1162,21 @@ def entity_turns(name: str):
     Query params:
         limit (int, default 50, max 200): how many of the most recent
             turns to return (DESC order; client reverses for display).
+        trail (int, default 0): when truthy, each ASSISTANT turn also
+            carries a compact 'trail' -- the per-iteration narration and
+            the tool names -- computed in SQL from the stored trajectory.
+
+            The thought stream was live-only until 2026-11-02: the
+            client built it from the 'thought' event and it lived in the
+            live bubble's DOM, so a FINISHED turn showed the answer and
+            nothing else (operator: "check on evie's session, I can't
+            see the thought stream"). The narration was never lost --
+            the loop writes it into turns.trajectory -- it was just
+            never on the wire.
+
+            It is opt-in because the raw trajectory is large: ~670 KB for
+            one busy turn, almost all of it the thinking blocks. The
+            compact trail is ~20 KB for 50 turns.
     """
     if not _agent_exists(name):
         return jsonify({"error": f"unknown agent: {name!r}"}), 400
@@ -1169,11 +1184,16 @@ def entity_turns(name: str):
         limit = max(1, min(int(request.args.get("limit", 50)), 200))
     except ValueError:
         return jsonify({"error": "limit must be an integer"}), 400
+    include_trail = str(request.args.get("trail", "")).strip().lower() in (
+        "1", "true", "yes", "on",
+    )
     user = current_user()
     user_id = user.id if user else None
     ext = current_app.extensions["harness"]
     memory = ext["memory"]
-    turns = memory.list_turns_for_persistent(name, user_id=user_id, limit=limit)
+    turns = memory.list_turns_for_persistent(
+        name, user_id=user_id, limit=limit, include_trail=include_trail,
+    )
     return jsonify({"name": name, "turns": turns}), 200
 
 

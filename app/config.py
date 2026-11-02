@@ -146,6 +146,13 @@ class _AgentLimits:
     # 1,000,000-token window and was rejected with
     # "context window exceeds limit (2013)".
     context_window_tokens: int
+    # The SOFT threshold on the same budget: at it, the model is told,
+    # in the system prompt, to wrap the turn up (a pinned memory with
+    # the handoff, a report of where it got to, and the plan for
+    # finishing the task), so the next turn can resume it. Below the hard
+    # ceiling, so the wrap-up happens while there is still room to
+    # finish. 0 = never warn.
+    context_wrap_tokens: int
     # Head/tail trim for tool output sent to the MODEL. The full output
     # still goes into the trajectory (the retraining corpus).
     tool_output_head_chars: int
@@ -452,7 +459,8 @@ def load_config(path: str | os.PathLike[str] = "config.yaml") -> AppConfig:
             max_pins_per_turn=int(ag["max_pins_per_turn"]),
             max_unpins_per_turn=int(ag["max_unpins_per_turn"]),
             max_turn_seconds=int(ag.get("max_turn_seconds", 0) or 0),
-            context_window_tokens=int(ag.get("context_window_tokens", 600_000) or 600_000),
+            context_window_tokens=int(ag.get("context_window_tokens", 800_000) or 800_000),
+            context_wrap_tokens=int(ag.get("context_wrap_tokens", 600_000) or 600_000),
             tool_output_head_chars=int(ag.get("tool_output_head_chars", 4_000) or 4_000),
             tool_output_tail_chars=int(ag.get("tool_output_tail_chars", 4_000) or 4_000),
         ),
