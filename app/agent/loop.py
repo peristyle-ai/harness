@@ -72,45 +72,117 @@ _NARRATE_RE = re.compile(
     r"|\b(?:returned|saved|pinned)\b"
 )
 
-# Phase 15.9 (2026-10-18): _INTENT_RE catches "intent without
-# execution" - the model writes an action verb in prose
-# ("resending", "let me check", "sending the email") without
-# issuing a tool_use block. This is the new failure mode
-# the model fell into after the narrate-detection was
+# Phase 15.9 (2026-10-18): the "intent without execution" guard - the
+# model writes an action verb in prose ("resending", "let me check",
+# "sending the email") without issuing a tool_use block. That is the
+# failure mode the model fell into after the narrate-detection was
 # tightened: too cautious to claim, too cautious to act.
 #
-# The regex lists explicit verb forms (base + -s + -ing + -ed
-# + irregular past tenses) so it matches "Resending",
-# "saved", "I just sent the email", etc. Word boundaries
-# (\b) prevent false positives like "ready" matching "read",
-# "listen" matching "list", etc.
-_INTENT_RE = re.compile(
-    r"\b(?:resend|resends|resending|resent|send|sends|sending|sent|check|checks|checking|checked|verify|verifies|verifying|verified|query|queries|querying|queried|render|renders|rendering|rendered|compute|computes|computing|computed|find|finds|finding|found|fetch|fetches|fetching|fetched|search|searches|searching|searched|attach|attaches|attaching|attached|write|writes|writing|wrote|written|read|reads|reading|list|lists|listed|listing|count|counts|counted|counting|pull|pulls|pulling|pulled|push|pushes|pushing|pushed|build|builds|building|built|generate|generates|generating|generated|create|creates|created|creating|delete|deletes|deleted|deleting|update|updates|updated|updating|save|saves|saved|saving|post|posts|posted|posting|get|gets|got|getting|sent|built|found|wrote|written)\b",
-    re.IGNORECASE | re.MULTILINE,
+# Phase 15.10 (2026-11-02): the detector has to tell an ANNOUNCEMENT
+# of work from a REPORT of work already done.
+#
+# The old detector (_INTENT_RE) matched a bare action verb ANYWHERE in
+# the text, and ordinary English is full of action verbs: "here is
+# where I GOT to", "read-only check", "you can FIND the invoice".
+# Measured against one production conversation's 89 assistant answers,
+# it fired on 86 of them.
+#
+# On 2026-11-02 it fired on a correct answer. An agent was asked to
+# stop working and report where it had got to; it did exactly that in
+# twelve seconds, and the guard matched the word "got", told it it had
+# narrated an action without performing it, and pushed it back into the
+# work loop for another 45 iterations and forty minutes.
+#
+# An announcement has a shape:
+#   * a forward frame -- "let me check", "I'll send", "I'm going to
+#     render", "I need to look";
+#   * or a bare progressive -- "Resending the invoice now.";
+# and it is the LAST thing the turn says (a promise in an earlier
+# sentence is the model thinking out loud, and the answer that follows
+# it is the answer), and it is neither negated ("I will NOT push") nor
+# gated on a consent-conditional ("say the word and I'll build it").
+_ANNOUNCE_VERB = (
+    r"(?:resend|send|check|confirm|verif|read|inspect|look|render|"
+    r"build|creat|writ|updat|fix|run|fetch|search|test|review|open|"
+    r"generat|attach|sav|list|quer|comput|find|pull|push|post|get|"
+    r"mak|draw|show|print|prepar|implement|patch|deploy|merg|commit|"
+    r"add|remov|delet|mov|cop|appl|install|scan|compar|investigat|"
+    r"diagnos|debug|view|gather|collect|grab|chang|switch|sort|"
+    r"extract|measure)"
 )
-
-# A promise of work NOT YET DONE, in the form the model actually uses:
-# "let me check", "I'll verify", "I'm going to render". The marker has to
-# be followed closely by the action verb, so a closing offer ("let me know
-# if you want it in the other currency") is not a promise.
-_FORWARD_PROMISE_RE = re.compile(
-    r"\b(?:let\s+me|i'?ll|i\s+will|i'?m\s+going\s+to|i\s+am\s+going\s+to|"
-    r"going\s+to)\b(?:\s+\w+){0,2}\s+"
-    r"\b(?:check\w*|verif\w+|read\w*|inspect\w*|look\w*|render\w*|build\w*|"
-    r"creat\w+|writ\w+|updat\w+|fix\w*|run\w*|fetch\w*|search\w*|test\w*|"
-    r"review\w*|open\w*|generat\w+|send\w*|attach\w*|sav\w+|list\w*|"
-    r"quer\w+|comput\w+|find\w*|pull\w*|push\w*|post\w*|get\w*|mak\w+|"
-    r"draw\w*|show\w*|print\w*|prepar\w+|implement\w*|patch\w*|deploy\w*|"
-    r"merg\w*|commit\w*|set\s+up|add\w*|remov\w+|delet\w*|mov\w*|cop\w*|"
-    r"appl\w+|install\w*|scan\w*|compar\w*|confirm\w*|doubl\w*|"
-    r"investigat\w+|diagnos\w+|debug\w*|see\b|view\w*|gather\w*|collect\w*|"
-    r"grab\w*|change\w*|switch\w*|start\w*|stop\w*|sort\w*|extract\w*|measure\w*)\b",
+_ANNOUNCE_FRAME = (
+    r"(?:let\s+me|i'?ll|i\s+will|i'?m\s+going\s+to|"
+    r"i\s+am\s+going\s+to|going\s+to|i\s+need\s+to|"
+    r"i\s+have\s+to|i\s+must|about\s+to)"
+)
+# A forward frame, then the action verb within a few words of it.
+_ANNOUNCE_FRAME_RE = re.compile(
+    r"\b" + _ANNOUNCE_FRAME + r"\b(?:\s+\w+){0,3}\s+\b"
+    + _ANNOUNCE_VERB + r"\w*\b",
     re.IGNORECASE,
 )
+# A bare progressive: the action is happening now ("Resending the
+# invoice now.").
+_ANNOUNCE_PROGRESSIVE_RE = re.compile(
+    r"\b(?:resending|sending|checking|confirming|verifying|rendering|"
+    r"writing|reading|fetching|searching|attaching|creating|updating|"
+    r"deleting|querying|computing|finding|building|generating|saving|"
+    r"posting|pushing|pulling|listing|counting|opening|running|executing|"
+    r"preparing|implementing|patching|deploying|merging|committing)\b",
+    re.IGNORECASE,
+)
+# A consent-conditional: the agent is offering, not announcing.
+_ANNOUNCE_OFFER_RE = re.compile(
+    r"\b(?:say\s+the\s+word|if\s+you(?:'d|\s+would)?\s+"
+    r"(?:like|want|prefer|rather)|if\s+you\s+want|let\s+me\s+know|"
+    r"on\s+your\s+word|when\s+you(?:'re|\s+are)\s+ready|should\s+i|"
+    r"want\s+me\s+to|if\s+you\s+confirm|give\s+the\s+word|"
+    r"tell\s+me\s+and)\b",
+    re.IGNORECASE,
+)
+# A negation: "I will NOT push" is a refusal, not an announcement.
+_ANNOUNCE_NEGATION_RE = re.compile(
+    r"\b(?:not|never|no\s+longer|n'?t|without|avoid|instead\s+of|"
+    r"don'?t)\b",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+def _announcement_is_gated(chunk: str, start: int, end: int) -> bool:
+    """Is this announcement negated, or gated on the user's consent?
+
+    "Say the word and I'll build it" is an offer, and "I will NOT push
+    the shared branch" is a refusal. Neither is work the agent has
+    announced and failed to do.
+    """
+    lead = chunk[max(0, start - 100):start]
+    if _ANNOUNCE_OFFER_RE.search(lead):
+        return True
+    if _ANNOUNCE_NEGATION_RE.search(chunk[start:end]):
+        return True
+    if re.match(r"\s+(?:not\b|never\b)", chunk[end:end + 40]):
+        return True
+    return False
 
 
-def _ends_on_a_promise(text: str) -> bool:
-    """Does the turn END on a promise of work not yet done?
+def _announces_work(chunk: str) -> bool:
+    """Does this piece of text announce work that has not been done?"""
+    for m in _ANNOUNCE_FRAME_RE.finditer(chunk):
+        if not _announcement_is_gated(chunk, m.start(), m.end()):
+            return True
+    for m in _ANNOUNCE_PROGRESSIVE_RE.finditer(chunk):
+        # A progressive only announces when it LEADS the chunk: "Reading
+        # the screenshot isn't reliable" is a sentence in a report, not
+        # an announcement.
+        if m.start() > 40:
+            continue
+        if not _announcement_is_gated(chunk, m.start(), m.end()):
+            return True
+    return False
+
+
+def _announces_unfinished_work(text: str | None) -> bool:
+    """Does the response END on an announcement of work not yet done?
 
     A report of work already done ("I checked it, it is correct") is an
     answer. A promise of work not yet done ("let me check it") is not --
@@ -123,10 +195,20 @@ def _ends_on_a_promise(text: str) -> bool:
     """
     if not text:
         return False
-    parts = [p for p in re.split(r"(?<=[.!?])\s+", text.strip()) if p.strip()]
+    parts = [p for p in _SENTENCE_SPLIT_RE.split(text.strip()) if p.strip()]
     if not parts:
         return False
-    return bool(_FORWARD_PROMISE_RE.search(parts[-1]))
+    return _announces_work(parts[-1])
+
+
+def _ends_on_a_promise(text: str) -> bool:
+    """Does the turn END on a promise of work not yet done?
+
+    The name the end-of-turn diagnostic uses; the detection itself
+    lives in _announces_unfinished_work, which also knows the
+    difference between an announcement and a report.
+    """
+    return _announces_unfinished_work(text)
 
 
 # Phase 15.9: intent-without-execution nudge message.
@@ -627,6 +709,37 @@ class AgentLoop:
         )
 
     @classmethod
+    @staticmethod
+    def _conversation_ran_tool(
+        agent_memory: Any,
+        conv_id: Any,
+        tool_name: str | None = None,
+    ) -> bool:
+        """Has this conversation run a tool in an EARLIER turn?
+
+        The narrate/claim guard needs the whole conversation, not just
+        the current turn: an agent that has been working for forty
+        iterations answers "here is where I got to" -- a report of work
+        already done -- and the harness must not treat that as a claim
+        it never performed.
+
+        The method is looked up on the memory object dynamically, so a
+        memory implementation that does not have it (the test doubles)
+        degrades to the old turn-scoped behaviour instead of raising.
+        """
+        probe = getattr(agent_memory, "conversation_ran_tool", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe(conv_id, tool_name))
+        except Exception:
+            log.warning(
+                "conversation_ran_tool probe failed; falling back to the "
+                "turn-scoped narrate guard",
+                exc_info=True,
+            )
+            return False
+
     def _unfulfilled_promise_text(
         cls, text: str, *, iterations_used: int, max_iters: int
     ) -> str:
@@ -1162,12 +1275,17 @@ class AgentLoop:
                         r"/api/v1/uploads/[0-9a-f]{8,}\.\w+", text
                     )
                     if url_pattern:
-                        prev_attach_file = any(
+                        prev_attach_file = (
                             any(
-                                r.get("name") == "attach_file"
-                                for r in it.get("tool_results", [])
+                                any(
+                                    r.get("name") == "attach_file"
+                                    for r in it.get("tool_results", [])
+                                )
+                                for it in emission_iters
                             )
-                            for it in emission_iters
+                            or self._conversation_ran_tool(
+                                agent_memory, conv_id, "attach_file",
+                            )
                         )
                         narrates = not prev_attach_file
                     else:
@@ -1182,49 +1300,53 @@ class AgentLoop:
                             it.get("tool_results")
                             for it in emission_iters
                         )
+                        # Phase 15.10 (2026-11-02): the evidence is the
+                        # CONVERSATION, not just this turn. An agent that
+                        # has been working for forty iterations answers
+                        # "here is where I got to" -- a report of work
+                        # already done -- and the harness must not
+                        # treat that as a claim it never performed. A
+                        # claim is only a fabrication if the work was
+                        # never done.
+                        claims = (
+                            # Phase 15.6 (2026-10-18): also fire on
+                            # the prose-only side-effect claim
+                            # pattern (_CLAIM_RE). The original
+                            # _NARRATE_RE only catches parseable
+                            # tool-call syntax; the model was
+                            # gaming it by writing confident prose
+                            # without a tool_use block.
+                            _NARRATE_RE.search(text) or _CLAIM_RE.search(text)
+                        )
                         narrates = (
                             not prev_successful_tool
-                            and bool(
-                                # Phase 15.6 (2026-10-18): also fire on
-                                # the prose-only side-effect claim
-                                # pattern (_CLAIM_RE). The original
-                                # _NARRATE_RE only catches parseable
-                                # tool-call syntax; the model was
-                                # gaming it by writing confident prose
-                                # without a tool_use block.
-                                _NARRATE_RE.search(text) or _CLAIM_RE.search(text)
+                            and bool(claims)
+                            and not self._conversation_ran_tool(
+                                agent_memory, conv_id,
                             )
                         )
                     # Phase 15.9 (2026-10-18): also detect "intent without
                     # execution" - the model wrote an action verb in
                     # prose but didn't issue a tool_use block.
-                    intent_matches = bool(_INTENT_RE.search(text))
+                    #
+                    # Phase 15.10 (2026-11-02): the detector tells an
+                    # ANNOUNCEMENT of work from a REPORT of work already
+                    # done. The old one matched a bare action verb
+                    # anywhere in the text, which fired on 86 of the 89
+                    # real assistant answers in one production
+                    # conversation -- including a correct status report,
+                    # which the guard then pushed back into the work
+                    # loop for another 45 iterations and forty minutes.
+                    intent_matches = _announces_unfinished_work(text)
                     nudges_so_far = sum(1 for it in emission_iters if it.get("_nudged"))
                     # Phase 15.6: pick which nudge text to send this time
                     # (1 = first nudge, 2 = second/stricter, beyond = suppress).
                     next_nudge_idx = nudges_so_far + 1
-                    # Apply the same broad guard (Phase 15.6.1) to the
-                    # intent check.
-                    if intent_matches or promise:
-                        prev_successful_tool_intent = any(
-                            it.get("tool_results") for it in emission_iters
-                        )
-                        # A promise is NOT suppressed by an earlier tool
-                        # result: the model announced work it has not
-                        # done, so the tool call that does it is still
-                        # missing. The suppression exists for the wrap-up
-                        # summary ("I sent it, it is attached"), which
-                        # reports work already done -- and a report is not
-                        # a promise.
-                        intent_narrates = (
-                            promise or not prev_successful_tool_intent
-                        )
-                        if promise:
-                            # Use the intent nudge: the model described an
-                            # action it did not perform.
-                            intent_matches = True
-                    else:
-                        intent_narrates = False
+                    # An announcement is an announcement wherever it
+                    # appears in the turn: a tool result earlier in the
+                    # turn does not make the promise at the end of it any
+                    # less a promise.
+                    intent_narrates = intent_matches or promise
                     # Combine: narrate fires if EITHER pattern matched.
                     narrates = narrates or intent_narrates or promise
                     if narrates and nudges_so_far < _MAX_NUDGES:

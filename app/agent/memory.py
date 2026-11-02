@@ -1648,6 +1648,65 @@ class MemoryAPI:
             ))
         return out
 
+    def conversation_ran_tool(
+        self, conversation_id: UUID, tool_name: str | None = None,
+    ) -> bool:
+        """Has this conversation run a tool in an EARLIER turn?
+
+        The narrate/claim guard needs the whole conversation, not just
+        the current turn: an agent that has been working for forty
+        iterations answers "here is where I got to" -- a report of work
+        already done -- and the harness must not treat that as a claim
+        it never performed. A claim is only a fabrication if the work
+        was never done, and the conversation's own tool output is the
+        evidence.
+
+        tool_name narrows the question to one tool ("did attach_file
+        run?"). None means any tool at all.
+        """
+        with self.pool.connection() as conn:
+            with conn.cursor() as cur:
+                if tool_name:
+                    cur.execute(
+                        f"""
+                        SELECT EXISTS (
+                            SELECT 1
+                              FROM {self.agent_name}.turns t
+                              JOIN LATERAL jsonb_array_elements(
+                                       COALESCE(t.trajectory->'iterations',
+                                                '[]'::jsonb)) AS it
+                                   ON TRUE
+                              JOIN LATERAL jsonb_array_elements(
+                                       COALESCE(it->'tool_calls',
+                                                '[]'::jsonb)) AS tc
+                                   ON TRUE
+                             WHERE t.conversation_id = %s
+                               AND tc->>'name' = %s
+                        )
+                        """,
+                        (conversation_id, tool_name),
+                    )
+                else:
+                    cur.execute(
+                        f"""
+                        SELECT EXISTS (
+                            SELECT 1
+                              FROM {self.agent_name}.turns t
+                              JOIN LATERAL jsonb_array_elements(
+                                       COALESCE(t.trajectory->'iterations',
+                                                '[]'::jsonb)) AS it
+                                   ON TRUE
+                             WHERE t.conversation_id = %s
+                               AND jsonb_array_length(
+                                       COALESCE(it->'tool_calls',
+                                                '[]'::jsonb)) > 0
+                        )
+                        """,
+                        (conversation_id,),
+                    )
+                row = cur.fetchone()
+                return bool(row and row[0])
+
     # ---- conversation listing / loading (UI) -----------------------
 
     def archive_conversation(

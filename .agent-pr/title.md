@@ -1,1 +1,1 @@
-fix(agent): a turn that ends on a promise is not an answer
+fix(agent): tell an announcement of work from a report of work already done
