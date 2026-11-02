@@ -23,6 +23,8 @@ from uuid import UUID, uuid4
 import psycopg
 from psycopg_pool import ConnectionPool
 
+from app.agent.names import canonical_agent_name
+
 log = logging.getLogger(__name__)
 
 
@@ -1584,7 +1586,7 @@ class MemoryAPI:
                 })
         return out
 
-    def _persistent_turns_sql(self) -> str:
+    def _persistent_turns_sql(self, agent_name: str) -> str:
         """The statement for the persistent turns listing.
 
         It is a method so that a test can run the EXACT statement the
@@ -1593,11 +1595,22 @@ class MemoryAPI:
         when the trail was not asked for -- a syntax error that no
         source-reading test could see, that only a real database would
         catch, and that reached production before it was caught.
+
+        The agent name is an ARGUMENT, not self.agent_name. The
+        MemoryAPI the route holds is the DEFAULT agent's ("memory":
+        default_memory -- back-compat), and it serves the persistent
+        conversation of whichever agent the URL asked for. An earlier
+        version read self.agent_name, so every agent except the default
+        one got an EMPTY CHAT: the statement asked the default agent's
+        schema for the other agent's conversation id and found nothing
+        there -- 197 turns in the database, none on the wire, and no
+        error to notice. The schema is the agent's, so the schema comes
+        from the argument.
         """
         return f"""
             SELECT id, role, content, model, attachments, created_at,
                    {self._TRAIL_EXPR} AS trail
-              FROM {self.agent_name}.turns
+              FROM {agent_name}.turns
              WHERE conversation_id = %s
                AND model IS DISTINCT FROM 'thought-stream'
              ORDER BY created_at DESC
@@ -1655,12 +1668,16 @@ class MemoryAPI:
         trajectory. The filter is kept as a guard so a legacy row can
         never render as a separate bubble again.
         """
+        # The agent name travels into SQL as a SCHEMA name, so it is
+        # canonicalised and checked ONCE here, for both statements.
+        agent_name = canonical_agent_name(agent_name)
         with self.pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     f"""
                     SELECT id FROM {agent_name}.conversations
-                     WHERE (user_id = %s OR (%s IS NULL AND user_id IS NULL))
+                     WHERE (user_id = %s
+                            OR (%s::bigint IS NULL AND user_id IS NULL))
                        AND is_group = FALSE
                      ORDER BY updated_at DESC LIMIT 1
                     """,
@@ -1698,7 +1715,7 @@ class MemoryAPI:
                 # evaluate the THEN branch of a CASE it does not need, so
                 # the ordinary chat load does not pay for the trail.
                 cur.execute(
-                    self._persistent_turns_sql(),
+                    self._persistent_turns_sql(agent_name),
                     (bool(include_trail), conv_id,
                      max(1, min(int(limit), 200))),
                 )

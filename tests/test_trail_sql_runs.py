@@ -25,6 +25,7 @@ It skips when there is no database to talk to. The CI job has one
 (the pgvector service); a laptop may not.
 """
 
+import contextlib
 import json
 import os
 import sys
@@ -43,6 +44,8 @@ from app.agent.memory import MemoryAPI  # noqa: E402
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 SCHEMA = "trail_sql_probe"
+SCHEMA_OTHER = "trail_sql_probe_other"
+USER_ID = 4242
 
 TRAJECTORY = {
     "iterations": [
@@ -87,31 +90,44 @@ def db():
     except Exception as exc:  # pragma: no cover - environment dependent
         pytest.skip("cannot reach the database: %s" % exc)
     cur = conn.cursor()
-    cur.execute("DROP SCHEMA IF EXISTS " + SCHEMA + " CASCADE")
-    cur.execute("CREATE SCHEMA " + SCHEMA)
-    cur.execute(
-        "CREATE TABLE " + SCHEMA + ".turns ("
-        " id bigserial PRIMARY KEY,"
-        " conversation_id uuid NOT NULL,"
-        " role text NOT NULL,"
-        " content text NOT NULL,"
-        " model text,"
-        " attachments jsonb NOT NULL DEFAULT '[]'::jsonb,"
-        " created_at timestamptz NOT NULL DEFAULT now(),"
-        " trajectory jsonb)"
-    )
+    for schema in (SCHEMA, SCHEMA_OTHER):
+        cur.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE")
+        cur.execute("CREATE SCHEMA " + schema)
+        cur.execute(
+            "CREATE TABLE " + schema + ".turns ("
+            " id bigserial PRIMARY KEY,"
+            " conversation_id uuid NOT NULL,"
+            " role text NOT NULL,"
+            " content text NOT NULL,"
+            " model text,"
+            " attachments jsonb NOT NULL DEFAULT '[]'::jsonb,"
+            " created_at timestamptz NOT NULL DEFAULT now(),"
+            " trajectory jsonb)"
+        )
+        cur.execute(
+            "CREATE TABLE " + schema + ".conversations ("
+            " id uuid PRIMARY KEY,"
+            " user_id bigint,"
+            " agent_name text NOT NULL DEFAULT 'wisp',"
+            " title text,"
+            " created_at timestamptz NOT NULL DEFAULT now(),"
+            " updated_at timestamptz NOT NULL DEFAULT now(),"
+            " archived_at timestamptz,"
+            " is_group boolean NOT NULL DEFAULT false)"
+        )
     cur.close()
     yield conn
     cur = conn.cursor()
-    cur.execute("DROP SCHEMA IF EXISTS " + SCHEMA + " CASCADE")
+    for schema in (SCHEMA, SCHEMA_OTHER):
+        cur.execute("DROP SCHEMA IF EXISTS " + schema + " CASCADE")
     cur.close()
     conn.close()
 
 
-def _sql() -> str:
+def _sql(agent: str = SCHEMA) -> str:
     mem = MemoryAPI(pool=None, embedding_client=None,
                     agent_name=SCHEMA, config=None)
-    return mem._persistent_turns_sql()
+    return mem._persistent_turns_sql(agent)
 
 
 def _seed(db, conv_id: str) -> None:
@@ -199,3 +215,87 @@ def test_the_trail_is_empty_when_it_is_not_asked_for(db):
         if isinstance(trail, str):
             trail = json.loads(trail)
         assert trail == [], "no trail, no cost"
+
+
+# ---------------------------------------------------------------------------
+# THE REGRESSION. The schema belongs to the agent ASKED FOR.
+# ---------------------------------------------------------------------------
+
+class _FakePool:
+    """The smallest pool MemoryAPI needs: .connection() as a context
+    manager that yields a connection with a .cursor()."""
+
+    def __init__(self, conn):
+        self._conn = conn
+
+    def connection(self):
+        return contextlib.nullcontext(self._conn)
+
+
+def _seed_other(db, conv_id: str, content: str) -> None:
+    """A conversation and a turn in the OTHER agent's schema."""
+    cur = db.cursor()
+    cur.execute(
+        "INSERT INTO " + SCHEMA_OTHER + ".conversations"
+        " (id, user_id, agent_name, is_group)"
+        " VALUES (%s, %s, %s, FALSE)",
+        (conv_id, USER_ID, SCHEMA_OTHER),
+    )
+    cur.execute(
+        "INSERT INTO " + SCHEMA_OTHER + ".turns"
+        " (conversation_id, role, content, model, trajectory)"
+        " VALUES (%s, 'assistant', %s, 'm', %s::jsonb)",
+        (conv_id, content, json.dumps(TRAJECTORY)),
+    )
+    cur.close()
+
+
+def test_the_service_reads_the_schema_of_the_agent_ASKED_FOR(db):
+    """THE BUG. The route holds the DEFAULT agent's MemoryAPI ("memory":
+    default_memory -- back-compat) and asks it for another agent's
+    persistent conversation. An earlier version of the statement read
+    the INSTANCE's schema, so it asked the default agent's turns table
+    for the other agent's conversation id -- and found nothing. The
+    chat rendered empty, the database was never in doubt (197 turns),
+    and nothing errored.
+
+    The previous test could not have caught it: it asked the instance's
+    own agent, so instance-schema and requested-schema were the same
+    schema and the statement was always right. This one asks for a
+    DIFFERENT agent than the instance's.
+    """
+    conv_id = "66666666-6666-6666-6666-666666666666"
+    _seed_other(db, conv_id, "the other agent's answer")
+    mem = MemoryAPI(pool=_FakePool(db), embedding_client=None,
+                    agent_name=SCHEMA, config=None)
+    turns = mem.list_turns_for_persistent(SCHEMA_OTHER, user_id=USER_ID)
+    assert [t["content"] for t in turns] == ["the other agent's answer"], (
+        "the turns of the agent asked for must come back; the statement "
+        "reads the schema of the agent asked for, not the schema of the "
+        "MemoryAPI instance"
+    )
+
+
+def test_the_agent_name_is_canonicalised_and_checked():
+    """The schema name travels into SQL, so it is checked once."""
+    mem = MemoryAPI(pool=None, embedding_client=None,
+                    agent_name=SCHEMA, config=None)
+    with pytest.raises(ValueError):
+        mem.list_turns_for_persistent("bad name; drop table", user_id=None)
+    with pytest.raises(ValueError):
+        mem.list_turns_for_persistent("' OR 1=1--", user_id=None)
+
+
+def test_a_LOGGED_OUT_caller_gets_no_turns_and_no_error(db):
+    """The route has no login requirement, so user_id can be None.
+
+    Postgres cannot infer the type of a NULL bind parameter, so the
+    lookup raised "could not determine data type of parameter $2" --
+    a 500 on the chat page for anyone who is not logged in. The
+    parameter is typed, and a caller with no user gets no turns.
+    """
+    conv_id = "77777777-7777-7777-7777-777777777777"
+    _seed_other(db, conv_id, "the other agent's answer")
+    mem = MemoryAPI(pool=_FakePool(db), embedding_client=None,
+                    agent_name=SCHEMA, config=None)
+    assert mem.list_turns_for_persistent(SCHEMA_OTHER, user_id=None) == []
