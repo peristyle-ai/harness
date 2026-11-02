@@ -72,22 +72,144 @@ _NARRATE_RE = re.compile(
     r"|\b(?:returned|saved|pinned)\b"
 )
 
-# Phase 15.9 (2026-10-18): _INTENT_RE catches "intent without
-# execution" - the model writes an action verb in prose
-# ("resending", "let me check", "sending the email") without
-# issuing a tool_use block. This is the new failure mode
-# the model fell into after the narrate-detection was
+# Phase 15.9 (2026-10-18): the "intent without execution" guard - the
+# model writes an action verb in prose ("resending", "let me check",
+# "sending the email") without issuing a tool_use block. That is the
+# failure mode the model fell into after the narrate-detection was
 # tightened: too cautious to claim, too cautious to act.
 #
-# The regex lists explicit verb forms (base + -s + -ing + -ed
-# + irregular past tenses) so it matches "Resending",
-# "saved", "I just sent the email", etc. Word boundaries
-# (\b) prevent false positives like "ready" matching "read",
-# "listen" matching "list", etc.
-_INTENT_RE = re.compile(
-    r"\b(?:resend|resends|resending|resent|send|sends|sending|sent|check|checks|checking|checked|verify|verifies|verifying|verified|query|queries|querying|queried|render|renders|rendering|rendered|compute|computes|computing|computed|find|finds|finding|found|fetch|fetches|fetching|fetched|search|searches|searching|searched|attach|attaches|attaching|attached|write|writes|writing|wrote|written|read|reads|reading|list|lists|listed|listing|count|counts|counted|counting|pull|pulls|pulling|pulled|push|pushes|pushing|pushed|build|builds|building|built|generate|generates|generating|generated|create|creates|created|creating|delete|deletes|deleted|deleting|update|updates|updated|updating|save|saves|saved|saving|post|posts|posted|posting|get|gets|got|getting|sent|built|found|wrote|written)\b",
-    re.IGNORECASE | re.MULTILINE,
+# Phase 15.10 (2026-11-02): the detector has to tell an ANNOUNCEMENT
+# of work from a REPORT of work already done.
+#
+# The old detector (_INTENT_RE) matched a bare action verb ANYWHERE in
+# the text, and ordinary English is full of action verbs: "here is
+# where I GOT to", "read-only check", "you can FIND the invoice".
+# Measured against one production conversation's 89 assistant answers,
+# it fired on 86 of them.
+#
+# On 2026-11-02 it fired on a correct answer. An agent was asked to
+# stop working and report where it had got to; it did exactly that in
+# twelve seconds, and the guard matched the word "got", told it it had
+# narrated an action without performing it, and pushed it back into the
+# work loop for another 45 iterations and forty minutes.
+#
+# An announcement has a shape:
+#   * a forward frame -- "let me check", "I'll send", "I'm going to
+#     render", "I need to look";
+#   * or a bare progressive -- "Resending the invoice now.";
+# and it is the LAST thing the turn says (a promise in an earlier
+# sentence is the model thinking out loud, and the answer that follows
+# it is the answer), and it is neither negated ("I will NOT push") nor
+# gated on a consent-conditional ("say the word and I'll build it").
+_ANNOUNCE_VERB = (
+    r"(?:resend|send|check|confirm|verif|read|inspect|look|render|"
+    r"build|creat|writ|updat|fix|run|fetch|search|test|review|open|"
+    r"generat|attach|sav|list|quer|comput|find|pull|push|post|get|"
+    r"mak|draw|show|print|prepar|implement|patch|deploy|merg|commit|"
+    r"add|remov|delet|mov|cop|appl|install|scan|compar|investigat|"
+    r"diagnos|debug|view|gather|collect|grab|chang|switch|sort|"
+    r"extract|measure)"
 )
+_ANNOUNCE_FRAME = (
+    r"(?:let\s+me|i'?ll|i\s+will|i'?m\s+going\s+to|"
+    r"i\s+am\s+going\s+to|going\s+to|i\s+need\s+to|"
+    r"i\s+have\s+to|i\s+must|about\s+to)"
+)
+# A forward frame, then the action verb within a few words of it.
+_ANNOUNCE_FRAME_RE = re.compile(
+    r"\b" + _ANNOUNCE_FRAME + r"\b(?:\s+\w+){0,3}\s+\b"
+    + _ANNOUNCE_VERB + r"\w*\b",
+    re.IGNORECASE,
+)
+# A bare progressive: the action is happening now ("Resending the
+# invoice now.").
+_ANNOUNCE_PROGRESSIVE_RE = re.compile(
+    r"\b(?:resending|sending|checking|confirming|verifying|rendering|"
+    r"writing|reading|fetching|searching|attaching|creating|updating|"
+    r"deleting|querying|computing|finding|building|generating|saving|"
+    r"posting|pushing|pulling|listing|counting|opening|running|executing|"
+    r"preparing|implementing|patching|deploying|merging|committing)\b",
+    re.IGNORECASE,
+)
+# A consent-conditional: the agent is offering, not announcing.
+_ANNOUNCE_OFFER_RE = re.compile(
+    r"\b(?:say\s+the\s+word|if\s+you(?:'d|\s+would)?\s+"
+    r"(?:like|want|prefer|rather)|if\s+you\s+want|let\s+me\s+know|"
+    r"on\s+your\s+word|when\s+you(?:'re|\s+are)\s+ready|should\s+i|"
+    r"want\s+me\s+to|if\s+you\s+confirm|give\s+the\s+word|"
+    r"tell\s+me\s+and)\b",
+    re.IGNORECASE,
+)
+# A negation: "I will NOT push" is a refusal, not an announcement.
+_ANNOUNCE_NEGATION_RE = re.compile(
+    r"\b(?:not|never|no\s+longer|n'?t|without|avoid|instead\s+of|"
+    r"don'?t)\b",
+    re.IGNORECASE,
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+def _announcement_is_gated(chunk: str, start: int, end: int) -> bool:
+    """Is this announcement negated, or gated on the user's consent?
+
+    "Say the word and I'll build it" is an offer, and "I will NOT push
+    the shared branch" is a refusal. Neither is work the agent has
+    announced and failed to do.
+    """
+    lead = chunk[max(0, start - 100):start]
+    if _ANNOUNCE_OFFER_RE.search(lead):
+        return True
+    if _ANNOUNCE_NEGATION_RE.search(chunk[start:end]):
+        return True
+    if re.match(r"\s+(?:not\b|never\b)", chunk[end:end + 40]):
+        return True
+    return False
+
+
+def _announces_work(chunk: str) -> bool:
+    """Does this piece of text announce work that has not been done?"""
+    for m in _ANNOUNCE_FRAME_RE.finditer(chunk):
+        if not _announcement_is_gated(chunk, m.start(), m.end()):
+            return True
+    for m in _ANNOUNCE_PROGRESSIVE_RE.finditer(chunk):
+        # A progressive only announces when it LEADS the chunk: "Reading
+        # the screenshot isn't reliable" is a sentence in a report, not
+        # an announcement.
+        if m.start() > 40:
+            continue
+        if not _announcement_is_gated(chunk, m.start(), m.end()):
+            return True
+    return False
+
+
+def _announces_unfinished_work(text: str | None) -> bool:
+    """Does the response END on an announcement of work not yet done?
+
+    A report of work already done ("I checked it, it is correct") is an
+    answer. A promise of work not yet done ("let me check it") is not --
+    and if the model says it will do something, the harness has to see
+    the tool call that does it.
+
+    Only the LAST sentence counts: a promise in an earlier sentence is
+    the model thinking out loud, and the answer that follows it is the
+    answer.
+    """
+    if not text:
+        return False
+    parts = [p for p in _SENTENCE_SPLIT_RE.split(text.strip()) if p.strip()]
+    if not parts:
+        return False
+    return _announces_work(parts[-1])
+
+
+def _ends_on_a_promise(text: str) -> bool:
+    """Does the turn END on a promise of work not yet done?
+
+    The name the end-of-turn diagnostic uses; the detection itself
+    lives in _announces_unfinished_work, which also knows the
+    difference between an announcement and a report.
+    """
+    return _announces_unfinished_work(text)
+
 
 # Phase 15.9: intent-without-execution nudge message.
 # Different from the existing narrate-nudges because the
@@ -120,6 +242,25 @@ def _no_answer_nudge(thinking: str) -> str:
         + thinking
     )
 
+
+# Phase 15.12 (2026-11-02): the nudge for a turn that was told to WRAP UP
+# and did not. The intent nudge ("you said you would do X, now do it")
+# is the wrong signal here: the model is not supposed to do the work
+# any more, it is supposed to write the handoff and stop. So this nudge
+# asks for the wrap-up itself, in the order the notice gave.
+_NUDGE_WRAPUP_MESSAGE = (
+    "Your context budget for this turn is nearly spent, and you have "
+    "been told to wrap the turn up. Wrapping up means, in this order: "
+    "(1) write or update a PINNED memory (memory_write with pin=true, or "
+    "memory_pin on an existing one) that carries the handoff -- the goal, "
+    "what is done and the evidence for it, what is not done, and the "
+    "exact next step; (2) report where you got to, plainly, with the "
+    "evidence; (3) end with an ordered plan for finishing the task, each "
+    "step concrete enough to execute without re-reading this "
+    "conversation. A pinned memory is injected into every later prompt, "
+    "including the next turn of this conversation -- your context is "
+    "not. Do that now, with real tool_use blocks, and then stop."
+)
 
 _NUDGE_MESSAGE = (
     "Your last response did not include a structured `tool_use` content "
@@ -216,6 +357,10 @@ _END_ITERATION_CAP = "iteration_cap"    # the loop ran out of iterations
 _END_WALL_CLOCK_CAP = "wall_clock_cap"  # the turn hit the wall-clock cap
 _END_FINAL_ANSWER = "final_answer"      # the model produced an answer
 _END_NO_ANSWER = "no_answer"            # the model ended with no answer
+_END_UNFULFILLED_PROMISE = "unfulfilled_promise"  # the model ended on a promise
+# Phase 15.12 (2026-11-02): the turn ended under the WRAP-UP notice --
+# the context budget ran low, the model was told to wrap up, and it did.
+_END_CONTEXT_WRAPUP = "context_wrapup"       # the turn ended on a wrap-up
 
 from .llm import BaseLLM
 from .llm.base import Message
@@ -586,6 +731,61 @@ class AgentLoop:
         )
 
     @classmethod
+    @staticmethod
+    def _conversation_ran_tool(
+        agent_memory: Any,
+        conv_id: Any,
+        tool_name: str | None = None,
+    ) -> bool:
+        """Has this conversation run a tool in an EARLIER turn?
+
+        The narrate/claim guard needs the whole conversation, not just
+        the current turn: an agent that has been working for forty
+        iterations answers "here is where I got to" -- a report of work
+        already done -- and the harness must not treat that as a claim
+        it never performed.
+
+        The method is looked up on the memory object dynamically, so a
+        memory implementation that does not have it (the test doubles)
+        degrades to the old turn-scoped behaviour instead of raising.
+        """
+        probe = getattr(agent_memory, "conversation_ran_tool", None)
+        if not callable(probe):
+            return False
+        try:
+            return bool(probe(conv_id, tool_name))
+        except Exception:
+            log.warning(
+                "conversation_ran_tool probe failed; falling back to the "
+                "turn-scoped narrate guard",
+                exc_info=True,
+            )
+            return False
+
+    def _unfulfilled_promise_text(
+        cls, text: str, *, iterations_used: int, max_iters: int
+    ) -> str:
+        """The turn ended on a promise the model never kept.
+
+        The model announced work it had not done ("let me check the
+        totals") and issued no tool call, so the turn produced no
+        answer. The nudges ran out before the model executed the
+        promise, and the promise is what is left.
+
+        The message says what happened, how many iterations the turn
+        used, and keeps the model's own words -- the work is not thrown
+        away.
+        """
+        used = f"{iterations_used} of the {max_iters} allowed tool iterations"
+        return (
+            "The model ended this turn on an unfulfilled promise: it "
+            "announced work it had not done (a \"let me check\" with no "
+            "tool call), and that was NOT an iteration-cap problem "
+            f"({used}). Its last output is below.\n\n"
+            f"{text}"
+        )
+
+    @classmethod
     def _iteration_cap_text(
         cls, *, iterations_used: int, max_iters: int
     ) -> str:
@@ -638,6 +838,49 @@ class AgentLoop:
                 return True
         messages.append(Message(role="user", content=content))
         return True
+
+    @staticmethod
+    def _window_system_text(
+        system_base: str, window_notice: str, wrap_notice: str,
+    ) -> str:
+        """The system prompt with the window notices appended.
+
+        Two notices can apply at once: the TRUNCATION one (the tail of
+        the turn was dropped) and the WRAP-UP one (the budget ran low,
+        wrap the turn up). The wrap-up one goes LAST: it is the
+        instruction the model has to act on now.
+
+        Split out as a static method so the seam can be unit-tested
+        without the DB + adapter stack.
+        """
+        extra = "\n\n".join(
+            part for part in (window_notice, wrap_notice) if part
+        )
+        if not extra:
+            return system_base
+        return f"{system_base}\n\n{extra}"
+
+    @staticmethod
+    def _nudge_content(wrap_up: bool, intent_matches: bool, next_nudge_idx: int) -> str:
+        """Which nudge to send for a model that answered in prose.
+
+        Three cases (2026-11-02):
+
+          * the turn was told to WRAP UP -- the model is not supposed to
+            do more work, it is supposed to write the handoff and stop,
+            so the nudge asks for the wrap-up. The intent nudge ("you
+            said you would do X, now do it") would push it straight
+            back into the loop it was told to leave;
+          * the model announced work without doing it -- the intent
+            nudge;
+          * otherwise the standard narrate nudges, first one lenient,
+            then stricter.
+        """
+        if wrap_up:
+            return _NUDGE_WRAPUP_MESSAGE
+        if intent_matches:
+            return _NUDGE_INTENT_MESSAGE
+        return _NUDGE_MESSAGES.get(next_nudge_idx, _NUDGE_MESSAGE)
 
     @staticmethod
     def _enforce_context_window(
@@ -818,6 +1061,13 @@ class AgentLoop:
             limit_tokens=self.config.agent.context_window_tokens,
             head_chars=self.config.agent.tool_output_head_chars,
             tail_chars=self.config.agent.tool_output_tail_chars,
+            # getattr, not a direct attribute: a config object that
+            # predates the key (an older loader, a test stub) must
+            # degrade to "no wrap-up notice", not fail the turn. The
+            # hard ceiling above still applies either way.
+            wrap_tokens=getattr(
+                self.config.agent, "context_wrap_tokens", 0,
+            ),
         )
         # Everything from here on is the LIVE turn (the messages above are
         # the system prompt + the replayed history, bounded separately).
@@ -830,6 +1080,19 @@ class AgentLoop:
         live_tokens = 0
         system_base = messages[0].content if messages else ""
         window_notice = ""
+        # Phase 15.12 (2026-11-02): the WRAP-UP notice. The budget has a
+        # hard ceiling (the oldest steps of the turn are dropped from
+        # under the model) and a soft one (this): at the soft ceiling the
+        # model is told, in the SYSTEM prompt, to wrap the turn up in an
+        # orderly way -- write the handoff into a pinned memory, report
+        # where it got to, and emit the plan for finishing the task -- so
+        # the next turn can resume it. `wrap_up` latches for the rest of
+        # the turn: once the model has been told to stop, an answer that
+        # announces more work is a missing wrap-up, not a reason to send
+        # it back into the work loop.
+        wrap_notice = ""
+        wrap_up = False
+        system_extra = ""
         # Wall-clock cap for one turn (2026-10-25, per the operator: big turns are
         # fine, but a single turn must not run forever).
         max_turn_seconds = int(self.config.agent.max_turn_seconds or 0)
@@ -1057,6 +1320,14 @@ class AgentLoop:
                     # properly on the next iteration. Capped at _MAX_NUDGES
                     # so we don't loop forever.
                     text = response.text or ""
+                    # A turn that ENDS on a promise of work not yet done is
+                    # not an answer, whatever ran before it (2026-11-02):
+                    # the intent-nudge below is suppressed for the whole
+                    # turn once any earlier iteration landed a tool result,
+                    # so a model that has been working for 50 iterations can
+                    # end on "let me check one last fact" and have that
+                    # promise taken for the answer.
+                    promise = _ends_on_a_promise(text)
                     # Phase 15.6.2 (2026-10-18): context-aware narrate
                     # detection. Two distinct failure modes need two
                     # different guards:
@@ -1089,12 +1360,17 @@ class AgentLoop:
                         r"/api/v1/uploads/[0-9a-f]{8,}\.\w+", text
                     )
                     if url_pattern:
-                        prev_attach_file = any(
+                        prev_attach_file = (
                             any(
-                                r.get("name") == "attach_file"
-                                for r in it.get("tool_results", [])
+                                any(
+                                    r.get("name") == "attach_file"
+                                    for r in it.get("tool_results", [])
+                                )
+                                for it in emission_iters
                             )
-                            for it in emission_iters
+                            or self._conversation_ran_tool(
+                                agent_memory, conv_id, "attach_file",
+                            )
                         )
                         narrates = not prev_attach_file
                     else:
@@ -1109,38 +1385,55 @@ class AgentLoop:
                             it.get("tool_results")
                             for it in emission_iters
                         )
+                        # Phase 15.10 (2026-11-02): the evidence is the
+                        # CONVERSATION, not just this turn. An agent that
+                        # has been working for forty iterations answers
+                        # "here is where I got to" -- a report of work
+                        # already done -- and the harness must not
+                        # treat that as a claim it never performed. A
+                        # claim is only a fabrication if the work was
+                        # never done.
+                        claims = (
+                            # Phase 15.6 (2026-10-18): also fire on
+                            # the prose-only side-effect claim
+                            # pattern (_CLAIM_RE). The original
+                            # _NARRATE_RE only catches parseable
+                            # tool-call syntax; the model was
+                            # gaming it by writing confident prose
+                            # without a tool_use block.
+                            _NARRATE_RE.search(text) or _CLAIM_RE.search(text)
+                        )
                         narrates = (
                             not prev_successful_tool
-                            and bool(
-                                # Phase 15.6 (2026-10-18): also fire on
-                                # the prose-only side-effect claim
-                                # pattern (_CLAIM_RE). The original
-                                # _NARRATE_RE only catches parseable
-                                # tool-call syntax; the model was
-                                # gaming it by writing confident prose
-                                # without a tool_use block.
-                                _NARRATE_RE.search(text) or _CLAIM_RE.search(text)
+                            and bool(claims)
+                            and not self._conversation_ran_tool(
+                                agent_memory, conv_id,
                             )
                         )
                     # Phase 15.9 (2026-10-18): also detect "intent without
                     # execution" - the model wrote an action verb in
                     # prose but didn't issue a tool_use block.
-                    intent_matches = bool(_INTENT_RE.search(text))
+                    #
+                    # Phase 15.10 (2026-11-02): the detector tells an
+                    # ANNOUNCEMENT of work from a REPORT of work already
+                    # done. The old one matched a bare action verb
+                    # anywhere in the text, which fired on 86 of the 89
+                    # real assistant answers in one production
+                    # conversation -- including a correct status report,
+                    # which the guard then pushed back into the work
+                    # loop for another 45 iterations and forty minutes.
+                    intent_matches = _announces_unfinished_work(text)
                     nudges_so_far = sum(1 for it in emission_iters if it.get("_nudged"))
                     # Phase 15.6: pick which nudge text to send this time
                     # (1 = first nudge, 2 = second/stricter, beyond = suppress).
                     next_nudge_idx = nudges_so_far + 1
-                    # Apply the same broad guard (Phase 15.6.1) to the
-                    # intent check.
-                    if intent_matches:
-                        prev_successful_tool_intent = any(
-                            it.get("tool_results") for it in emission_iters
-                        )
-                        intent_narrates = not prev_successful_tool_intent
-                    else:
-                        intent_narrates = False
+                    # An announcement is an announcement wherever it
+                    # appears in the turn: a tool result earlier in the
+                    # turn does not make the promise at the end of it any
+                    # less a promise.
+                    intent_narrates = intent_matches or promise
                     # Combine: narrate fires if EITHER pattern matched.
-                    narrates = narrates or intent_narrates
+                    narrates = narrates or intent_narrates or promise
                     if narrates and nudges_so_far < _MAX_NUDGES:
                         log.warning(
                             "agent_loop: model narrated a tool call in prose "
@@ -1166,18 +1459,9 @@ class AgentLoop:
                         # you'd do X, now actually do X" (vs the claim
                         # pattern's "you said you did X, but you
                         # didn't"). Same max-nudge cap (Phase 15.8).
-                        if intent_matches:
-                            nudge_content = _NUDGE_INTENT_MESSAGE
-                        else:
-                            # Phase 15.6: pick which nudge text to send this time.
-                            # First nudge is the standard 'use a real tool_use
-                            # block' reminder; second nudge is the stricter
-                            # 'prose claim of side effect is a visible lie'
-                            # message. After _MAX_NUDGES, we fall through
-                            # to 'take the text as the final answer'.
-                            nudge_content = _NUDGE_MESSAGES.get(
-                                next_nudge_idx, _NUDGE_MESSAGE
-                            )
+                        nudge_content = self._nudge_content(
+                            wrap_up, intent_matches, next_nudge_idx,
+                        )
                         messages.append(Message(
                             role="user",
                             content=nudge_content,
@@ -1190,7 +1474,27 @@ class AgentLoop:
                     # the final answer.
                     final_text = response.text
                     if final_text:
-                        end_reason = _END_FINAL_ANSWER
+                        if promise:
+                            # The nudges ran out and the model is still
+                            # promising work it has not done. Say that,
+                            # rather than present the promise as the
+                            # answer.
+                            end_reason = _END_UNFULFILLED_PROMISE
+                            final_text = self._unfulfilled_promise_text(
+                                final_text, iterations_used=llm_calls,
+                                max_iters=max_iters,
+                            )
+                            log.warning(
+                                "agent_loop: the model ended the turn on an "
+                                "unfulfilled promise (no tool call) after "
+                                "%d/%d iterations",
+                                llm_calls, max_iters,
+                            )
+                        else:
+                            end_reason = (
+                                _END_CONTEXT_WRAPUP if wrap_up
+                                else _END_FINAL_ANSWER
+                            )
                     else:
                         # CASE B (2026-10-27): the model ended the turn
                         # with no text and no tool call. The minimax
@@ -1434,9 +1738,24 @@ class AgentLoop:
                     )
                     if notice and notice != window_notice:
                         window_notice = notice
+                    # The wrap-up notice rides with the truncation
+                    # notice: the system prompt carries whichever of the
+                    # two applies, and the wrap-up one LAST -- it is the
+                    # instruction the model has to act on now.
+                    wrap = ctx_window.wrap_notice(live_tokens)
+                    if wrap:
+                        wrap_notice = wrap
+                        wrap_up = True
+                    extra = "\n\n".join(
+                        part for part in (window_notice, wrap_notice) if part
+                    )
+                    if extra and extra != system_extra:
+                        system_extra = extra
                         messages[0] = Message(
                             role="system",
-                            content=f"{system_base}\n\n{window_notice}",
+                            content=self._window_system_text(
+                                system_base, window_notice, wrap_notice,
+                            ),
                         )
                 # --- mid-turn steering (2026-10-25, per the operator) --------------
                 # A user message that arrived while this turn was running
@@ -1482,8 +1801,9 @@ class AgentLoop:
                     )
                 turn_state.set_progress(final_text=final_text)
             log.info(
-                "agent_loop: turn ended (reason=%s, iters=%d/%d)",
-                end_reason, llm_calls, max_iters,
+                "agent_loop: turn ended (reason=%s, iters=%d/%d, "
+                "wrap_up=%s)",
+                end_reason, llm_calls, max_iters, wrap_up,
             )
 
             latency_ms = int((time.monotonic() - t0) * 1000)

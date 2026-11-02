@@ -157,7 +157,22 @@ agent:
   # the turn are dropped and the model is told, in the system prompt,
   # that its tail was truncated -- so it recovers the trajectory from
   # its memory tools and its commits.
-  context_window_tokens: 600000
+  #
+  # 2026-11-02: raised 600000 -> 800000. The model's own window is
+  # 1,000,000 tokens, so this leaves room for the replayed history and
+  # the response. The soft threshold below is what actually stops a long
+  # turn from growing into it.
+  context_window_tokens: 800000
+  # The SOFT threshold on the same budget. At it the model is told, in
+  # the system prompt, to WRAP THE TURN UP: write or update a pinned
+  # memory carrying the handoff (the goal, what is done with its
+  # evidence, what is not, the exact next step), report where it got to,
+  # and end with an ordered plan for finishing the task -- which is what
+  # the next turn resumes from. Below the hard ceiling above, so the
+  # wrap-up happens while there is still room to finish.
+  # 0 = never warn. If it is not below context_window_tokens, the hard
+  # ceiling bites first and the truncation notice is the one that fires.
+  context_wrap_tokens: 600000
   # Head/tail trim for tool output sent to the MODEL (the full output
   # still goes into the trajectory).
   tool_output_head_chars: 4000
