@@ -1,66 +1,69 @@
-## What happened
+The guard that refuses `setuid` also refused `600`.
 
-A production turn on harness2 (the Durthu / Drycha install) died at
-iteration 63, with 122 tool calls done, and the user saw:
+The pattern was
 
-```
-⚠️ RuntimeError: minimax_m31_flash stream error: api_error: Internal
-server error. Please retry your request. (500)
-```
+    \bchmod\s+[0-7]*[4-7][0-7][0-7]\b
 
-The provider said "Please retry your request". The harness did not
-retry.
+and it was meant to catch the setuid bit. It did not, in either
+direction.
 
-## Why
+**It refused the ordinary modes.** In a three-digit mode the leading
+digit is the owner's read, write and execute bits -- it carries no
+privilege at all. But the pattern matched any three-digit mode whose
+leading digit fell in 4-7, so the everyday modes `644`, `600`, `700`,
+`755`, `664`, `400` and `500` were all blocked and reported as
+"setuid". Setting a config file to mode `600` is one of the most
+ordinary things an agent does, and it was refused.
 
-MiniMax delivered the 500 **inside a 200 response**, as an SSE `error`
-event:
+**And it let the privileged ones through.** `4000` and `2000` are setuid
+and setgid with no other bits, and neither matched. Neither did the
+short forms that set those bits on their own.
 
-```json
-{"type":"error","error":{"type":"api_error",
- "message":"Internal server error. Please retry your request. (500)"}}
-```
+A guard that refuses the ordinary command is not a guard, it is an
+outage: the agent gets an error that reads like a security decision,
+and the natural response is to find a way around the guard rather than
+to report it.
 
-The HTTP status was 200, so the retry ladder in
-`base._post_with_retry` -- which keys off the status code -- never saw
-it. The adapter's only recovery for a failed stream was "fall back to a
-buffered POST", and that fallback was skipped whenever the attempt had
-already streamed some text, because the fallback would have duplicated
-it.
+## What changes
 
-So the failure landed in the one case with no recovery at all: text
-already shown. The same 500 hit the other install on 2026-11-03 and
-RECOVERED -- purely because that attempt had streamed nothing yet.
+The privilege bits can only be expressed in the **four-digit** form,
+where the leading digit is the special-bits octal digit -- `4` setuid,
+`2` setgid, `1` sticky. So:
 
-## What this changes
+- a four-digit mode whose leading digit carries setuid or setgid is
+  refused -- `2`, `3`, `4`, `5`, `6` or `7`, which is every leading
+  digit except `0` (no special bits at all) and `1` (sticky alone);
+- the short forms that set those bits on their own -- `2`, `4`, `6` --
+  are refused;
+- every three-digit mode is allowed, including the leading-zero forms;
+- the sticky bit is **not** matched.
 
-- A new typed error, `TransientProviderError`, for a provider failure
-  the same request may survive (a 5xx, an overload, a rate limit).
-- The SSE `error` event is classified. Transient failures are retried;
-  permanent ones (a bad request, a context window that is full) are
-  not -- repeating those changes nothing.
-- **With nothing shown yet**: the buffered POST, as before. It retries
-  5xx at the HTTP level, where the status code is visible.
-- **With text already shown**: the request is repeated, and the
-  retry's text is suppressed. The client already saw the first
-  attempt's text, and a retry answers differently (temperature 0.7),
-  so the authoritative text arrives with the iteration's `iter_text`
-  event instead -- the answer is never shown twice.
-- The chat bubble reads a sentence, not a Python repr: "MiniMax
-  returned a transient error while answering ...". It says the turn was
-  not lost.
+On sticky: it takes rights *away* rather than granting them -- it is
+what stops one user deleting another user's file in a shared directory
+-- and the symbolic rule immediately above already allows the sticky
+form for the same reason. If the project would rather refuse sticky as
+well, that is one character in the pattern and one line in the test.
 
-`llm.transient_retry_attempts` (default 2) and
-`llm.transient_retry_backoff_s` (default 3.0) control the ladder.
-Setting attempts to 0 restores the old behaviour.
+The symbolic rule (`u+s`), the `777` rule and the recursive-`chmod`
+soft-flag are untouched.
 
 ## Tests
 
-`tests/test_minimax_transient_retry.py` -- 10 offline tests: the
-production case, no duplication of the answer, the buffered path when
-nothing was shown, giving up when the provider stays down, a permanent
-error not being retried, the context-window mapping surviving the
-fallback, a caller with no live deltas keeping its old behaviour, and
-the message the user reads.
+`tests/test_chmod_mode_scope.py` -- 33 cases:
 
-Full suite: 433 passed, 16 skipped.
+- the privileged modes stay refused (the four-digit setuid, setgid and
+  both-together forms, and the short forms that set those bits alone);
+- the everyday modes are allowed, including `0600`, `0700` and `0755`;
+- the sticky forms are allowed;
+- the symbolic `u+s` form stays refused.
+
+The file fails 21 of its 33 cases against the old pattern and passes
+all 33 against the new one, so it can actually fail.
+
+The rest of the suite is unchanged: the same three tests fail before
+and after this change (430 passed / 3 failed / 16 skipped before, 463
+passed / 3 failed / 16 skipped after).
+
+## For the reviewer
+
+The change is generic and names no install.
