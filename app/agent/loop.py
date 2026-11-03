@@ -364,7 +364,7 @@ _END_UNFULFILLED_PROMISE = "unfulfilled_promise"  # the model ended on a promise
 _END_CONTEXT_WRAPUP = "context_wrapup"       # the turn ended on a wrap-up
 
 from .llm import BaseLLM
-from .llm.base import Message
+from .llm.base import Message, user_facing_error
 from .tools import ToolContext, all_tools as all_registered_tools, get as get_tool
 
 log = logging.getLogger(__name__)
@@ -1951,12 +1951,12 @@ class AgentLoop:
                     retrieved_ids=retrieved_ids,
                     request_id=request_id,
                     embed=False,
-                    error_message=nul_safe(f"{type(e).__name__}: {e}"),
+                    error_message=nul_safe(user_facing_error(e)),
                 )
                 assistant_turn_persisted = True
             except Exception as pe:
                 log.exception("failed to persist the failed turn: %s", pe)
-            yield {"type": "error", "message": nul_safe(f"{type(e).__name__}: {e}")}
+            yield {"type": "error", "message": nul_safe(user_facing_error(e))}
         finally:
             # Phase 16.5 (2026-10-20): persist partial assistant turn on
             # client disconnect (GeneratorExit raised at any yield point).

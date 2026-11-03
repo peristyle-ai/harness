@@ -78,6 +78,19 @@ llm:
   # written); 0 = wait for the whole answer. The LLM_STREAMING
   # environment variable overrides this at runtime.
   streaming: 1
+  # Transient provider errors.
+  #
+  # MiniMax can answer a request with a 5xx INSIDE a 200 response -- an
+  # SSE "error" event saying "Internal server error. Please retry your
+  # request. (500)". The HTTP status is 200, so a retry ladder that keys
+  # off the status code never sees it. These two settings make the
+  # harness believe the provider: the request is repeated, and the
+  # retry's text is suppressed so the answer is not shown twice.
+  #
+  # 0 attempts restores the old behaviour (fail on the first error).
+  transient_retry_attempts: 2
+  # First retry delay in seconds; each further retry doubles it.
+  transient_retry_backoff_s: 3.0
   # Per-agent LLM overrides.
   #
   # Each entry is a PARTIAL override for one agent: the fields it names

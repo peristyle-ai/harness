@@ -1,1 +1,1 @@
-fix(agent): a turn must survive whatever a tool printed
+fix(llm): a transient provider error must not kill the turn
