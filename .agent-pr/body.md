@@ -1,13 +1,66 @@
-A turn could not be persisted at all if it carried a NUL byte, and the error message that replaced it carried the same bytes -- so the failure repeated while it was being reported.
+## What happened
 
-On 2026-11-03 this hit two agents on one install: an agent asked to debug a rendering problem lost its own answer to the rendering problem, because the answer contained the very bytes it was reporting on.
+A production turn on harness2 (the Durthu / Drycha install) died at
+iteration 63, with 122 tool calls done, and the user saw:
 
-Postgres cannot store a NUL, in text or in jsonb. A NUL gets into a turn the moment a tool reads a BINARY file -- an ELF header, a .pyc, a core dump. The bytes travel through the tool result into the trajectory, and then the turn cannot be persisted.
+```
+⚠️ RuntimeError: minimax_m31_flash stream error: api_error: Internal
+server error. Please retry your request. (500)
+```
 
-Two failures, different in kind: invalid UTF-8 breaks the DECODE (subprocess text=True decodes strictly, so the tool raised UnicodeDecodeError before it could return anything), while a NUL is valid UTF-8 and only explodes at the database, much later.
+The provider said "Please retry your request". The harness did not
+retry.
 
-The fix is one boundary rule: nothing enters the harness carrying a NUL, and every tool output is decoded leniently.
+## Why
 
-The order matters: json.dumps turns a NUL into \u0000, which is legal JSON and still rejected by jsonb -- so sanitising AFTER the serialisation would be too late. The sanitising happens BEFORE it.
+MiniMax delivered the 500 **inside a 200 response**, as an SSE `error`
+event:
 
-The regression test was seen failing on the pre-fix code, and it fails for the right reason rather than as a collection error. The fix was also proved end to end against a real Postgres, on both the text and the jsonb path.
+```json
+{"type":"error","error":{"type":"api_error",
+ "message":"Internal server error. Please retry your request. (500)"}}
+```
+
+The HTTP status was 200, so the retry ladder in
+`base._post_with_retry` -- which keys off the status code -- never saw
+it. The adapter's only recovery for a failed stream was "fall back to a
+buffered POST", and that fallback was skipped whenever the attempt had
+already streamed some text, because the fallback would have duplicated
+it.
+
+So the failure landed in the one case with no recovery at all: text
+already shown. The same 500 hit the other install on 2026-11-03 and
+RECOVERED -- purely because that attempt had streamed nothing yet.
+
+## What this changes
+
+- A new typed error, `TransientProviderError`, for a provider failure
+  the same request may survive (a 5xx, an overload, a rate limit).
+- The SSE `error` event is classified. Transient failures are retried;
+  permanent ones (a bad request, a context window that is full) are
+  not -- repeating those changes nothing.
+- **With nothing shown yet**: the buffered POST, as before. It retries
+  5xx at the HTTP level, where the status code is visible.
+- **With text already shown**: the request is repeated, and the
+  retry's text is suppressed. The client already saw the first
+  attempt's text, and a retry answers differently (temperature 0.7),
+  so the authoritative text arrives with the iteration's `iter_text`
+  event instead -- the answer is never shown twice.
+- The chat bubble reads a sentence, not a Python repr: "MiniMax
+  returned a transient error while answering ...". It says the turn was
+  not lost.
+
+`llm.transient_retry_attempts` (default 2) and
+`llm.transient_retry_backoff_s` (default 3.0) control the ladder.
+Setting attempts to 0 restores the old behaviour.
+
+## Tests
+
+`tests/test_minimax_transient_retry.py` -- 10 offline tests: the
+production case, no duplication of the answer, the buffered path when
+nothing was shown, giving up when the provider stays down, a permanent
+error not being retried, the context-window mapping surviving the
+fallback, a caller with no live deltas keeping its old behaviour, and
+the message the user reads.
+
+Full suite: 433 passed, 16 skipped.

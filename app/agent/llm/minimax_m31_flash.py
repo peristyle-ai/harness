@@ -61,7 +61,8 @@ import httpx
 
 from app.agent.tool_repair import repair_text_to_tool_calls, strip_repaired_blocks
 
-from .base import BaseLLM, ContextWindowExceeded, LLMResponse, Message, ToolCall
+from .base import (BaseLLM, ContextWindowExceeded, LLMResponse, Message,
+                   ToolCall, TransientProviderError)
 
 log = logging.getLogger(__name__)
 
@@ -94,6 +95,45 @@ def _describe_transport_error(exc: Exception, body_bytes: int,
             f"was received but no answer came back"
         )
     return exc
+
+
+def _is_transient_provider_error(err_type: str, err_msg: str) -> bool:
+    """True when an in-stream error means "the upstream was unwell".
+
+    The provider can deliver a 5xx INSIDE a 200 response, as an SSE
+    "error" event. The HTTP-level retry ladder in `base._post_with_retry`
+    never sees it -- the status was 200 -- so this is the only place
+    that failure can be recognised.
+
+    The shape seen in production (2026-11-04, harness2):
+
+        {"type":"error","error":{"type":"api_error",
+         "message":"Internal server error. Please retry your request. (500)"}}
+
+    The type is the primary signal. The message patterns are a fallback
+    for an error event with an unfamiliar type, and they are deliberately
+    narrow: "internal server error", "please retry", "temporarily",
+    "overloaded", "try again", or an explicit 5xx in parentheses.
+
+    A permanent failure is NOT transient: "invalid_request_error" (a bad
+    request, a context window that is full) repeats identically forever.
+    """
+    t = (err_type or "").strip().lower()
+    if t in {"api_error", "overloaded_error", "rate_limit_error",
+             "server_error", "internal_server_error", "service_unavailable"}:
+        return True
+    if t in {"invalid_request_error", "authentication_error",
+             "permission_error", "not_found_error"}:
+        return False
+    m = (err_msg or "").strip().lower()
+    return (
+        "internal server error" in m
+        or "please retry" in m
+        or "temporarily unavailable" in m
+        or "overloaded" in m
+        or "try again" in m
+        or re.search(r"\(5\d\d\)", m) is not None
+    )
 
 
 def _is_context_window_error(response: Any) -> bool:
@@ -148,6 +188,14 @@ class LLM(BaseLLM):
         # the same `_Llm.thinking` field without conflict. When None,
         # the field is omitted and MiniMax defaults to effort=max.
         self.thinking = getattr(config.llm, "thinking", None)
+        # Transient provider errors -- a 5xx delivered INSIDE a 200 response,
+        # an overload, a rate limit -- are retried: the provider itself
+        # says "please retry". Defaults: two extra attempts, 3s then 6s.
+        # 0 attempts restores the old behaviour (fail on the first error).
+        self.transient_retry_attempts = int(
+            getattr(config.llm, "transient_retry_attempts", 2) or 0)
+        self.transient_retry_backoff_s = float(
+            getattr(config.llm, "transient_retry_backoff_s", 3.0) or 0.0)
         # SSE streaming on by default (2026-10-21). The config carries the
         # default (llm.streaming); the LLM_STREAMING environment variable
         # overrides it, so a rollback is still one variable and a restart,
@@ -211,60 +259,119 @@ class LLM(BaseLLM):
         # Mutable cell: a plain int cannot be rebound from the callback, and a
         # lambda would silently never increment it.
         emitted = [0]
+        # How many deltas the CLIENT actually received. A retry of the same
+        # request produces a DIFFERENT narration (temperature 0.7), so the
+        # retry's deltas are suppressed: the client already saw the first
+        # attempt's text, and the authoritative text arrives with the
+        # iteration's iter_text event instead. Without the suppression the
+        # user would read the model's answer twice.
+        shown = [0]
+        suppress = [False]
+        # The counters track what the CALLER can see. A caller that asked
+        # for no live deltas (on_delta is None) sees nothing until the
+        # whole answer arrives, so a failed stream can still fall back to
+        # the buffered POST -- exactly as it did before this change. The
+        # wrapper below is always passed to the stream, so the "was
+        # anything shown?" question has to be answered HERE.
+        has_live_consumer = on_delta is not None
 
         def _bump() -> None:
-            emitted[0] += 1
+            if has_live_consumer:
+                emitted[0] += 1
+
+        def _forward(text: str) -> None:
+            if not text or suppress[0] or not has_live_consumer:
+                return
+            shown[0] += 1
+            on_delta(text)
 
         body_bytes = _body_size(body)
-        try:
-            data = self._stream_to_message(url, headers, body, on_delta,
-                                           on_emit=_bump)
-        except Exception as e:
-            # A context-window 400 is not a transport failure: the request
-            # was too big. Falling back to a buffered POST would send the
-            # SAME oversized request and fail the same way, so raise the
-            # typed error instead (2026-10-25).
-            if isinstance(e, httpx.HTTPStatusError) and _is_context_window_error(e.response):
-                raise ContextWindowExceeded(detail=e.response.text[:500]) from e
-            # Only safe to retry if the caller has not already been shown
-            # partial output -- otherwise we would duplicate it.
-            #
-            # A dropped upstream connection (httpx.RemoteProtocolError) is
-            # worth retrying when nothing was emitted: the pooled connection
-            # was poisoned, and the fallback below reuses the same client.
-            # The buffered path now treats RemoteProtocolError as retryable
-            # and reports an empty body clearly instead of a bare
-            # JSONDecodeError.
-            if emitted[0]:
-                log.error("minimax_m31_flash: stream failed after %d emitted "
-                          "delta(s) (%s: %s); NOT retrying to avoid duplicate output",
-                          emitted[0], type(e).__name__, e)
-                raise
-            if (isinstance(e, httpx.ReadTimeout)
-                    and body_bytes >= LARGE_REQUEST_BYTES):
-                # The streaming path and the buffered fallback send the
-                # SAME body. On a big body the fallback is not a second
-                # chance, it is the same multi-megabyte request again --
-                # and the buffered path has to wait for the WHOLE answer
-                # before it can report anything, so it is strictly
-                # slower than the stream that just timed out. Report the
-                # failure now instead of spending another window on it.
-                log.error("minimax_m31_flash: streaming path failed (%s: %s) "
-                          "on a %.1f MB request; not retrying it",
-                          type(e).__name__, e, body_bytes / 1_000_000)
-                raise _describe_transport_error(e, body_bytes, self.timeout_s) from e
-            log.warning("minimax_m31_flash: streaming path failed (%s: %s); "
-                        "falling back to buffered POST",
-                        type(e).__name__, e)
-            # The fallback must NOT ask for a stream. `body` still carries
-            # stream=True from _build_body, and the endpoint HONOURS it: the
-            # "buffered" retry came back as text/event-stream, so r.json()
-            # raised "JSONDecodeError: Expecting value: line 1 column 1
-            # (char 0)" and the turn died instead of degrading. Strip the
-            # flag for the fallback only -- the SSE path above still wants
-            # it (2026-10-29, a production install).
-            buffered_body = {k: v for k, v in body.items() if k != "stream"}
-            return self._complete_buffered(url, headers, buffered_body, tools)
+        transient_attempts = 0
+        while True:
+            try:
+                data = self._stream_to_message(url, headers, body, _forward,
+                                               on_emit=_bump)
+                break
+            except TransientProviderError as e:
+                # The provider failed transiently, and it failed INSIDE a
+                # 200 response -- so the HTTP-level retry ladder never sees
+                # it. (2026-11-04, production harness2: this killed a turn
+                # at iteration 63 with 122 tool calls done, on a provider
+                # message that said "Please retry your request".)
+                if not shown[0]:
+                    # Nothing reached the client yet, so the buffered POST
+                    # is the cheaper recovery: it retries 5xx at the HTTP
+                    # level, where the status code IS visible.
+                    log.warning("minimax_m31_flash: transient provider error "
+                                "(%s) with nothing shown yet; falling back to "
+                                "buffered POST", e)
+                    buffered_body = {k: v for k, v in body.items()
+                                     if k != "stream"}
+                    return self._complete_buffered(url, headers, buffered_body,
+                                                   tools)
+                if transient_attempts >= self.transient_retry_attempts:
+                    log.error("minimax_m31_flash: transient provider error "
+                              "after %d retr(y/ies) (%s); giving up",
+                              transient_attempts, e)
+                    raise
+                transient_attempts += 1
+                delay = (self.transient_retry_backoff_s
+                         * (2 ** (transient_attempts - 1)))
+                log.warning("minimax_m31_flash: transient provider error (%s) "
+                            "after %d streamed delta(s); retrying in %.1fs "
+                            "(attempt %d/%d) -- the retry's text is suppressed "
+                            "so the answer is not shown twice",
+                            e, shown[0], delay, transient_attempts,
+                            self.transient_retry_attempts)
+                suppress[0] = True
+                time.sleep(delay)
+                continue
+            except Exception as e:
+                # A context-window 400 is not a transport failure: the request
+                # was too big. Falling back to a buffered POST would send the
+                # SAME oversized request and fail the same way, so raise the
+                # typed error instead (2026-10-25).
+                if isinstance(e, httpx.HTTPStatusError) and _is_context_window_error(e.response):
+                    raise ContextWindowExceeded(detail=e.response.text[:500]) from e
+                # Only safe to retry if the caller has not already been shown
+                # partial output -- otherwise we would duplicate it.
+                #
+                # A dropped upstream connection (httpx.RemoteProtocolError) is
+                # worth retrying when nothing was emitted: the pooled connection
+                # was poisoned, and the fallback below reuses the same client.
+                # The buffered path now treats RemoteProtocolError as retryable
+                # and reports an empty body clearly instead of a bare
+                # JSONDecodeError.
+                if emitted[0]:
+                    log.error("minimax_m31_flash: stream failed after %d emitted "
+                              "delta(s) (%s: %s); NOT retrying to avoid duplicate output",
+                              emitted[0], type(e).__name__, e)
+                    raise
+                if (isinstance(e, httpx.ReadTimeout)
+                        and body_bytes >= LARGE_REQUEST_BYTES):
+                    # The streaming path and the buffered fallback send the
+                    # SAME body. On a big body the fallback is not a second
+                    # chance, it is the same multi-megabyte request again --
+                    # and the buffered path has to wait for the WHOLE answer
+                    # before it can report anything, so it is strictly
+                    # slower than the stream that just timed out. Report the
+                    # failure now instead of spending another window on it.
+                    log.error("minimax_m31_flash: streaming path failed (%s: %s) "
+                              "on a %.1f MB request; not retrying it",
+                              type(e).__name__, e, body_bytes / 1_000_000)
+                    raise _describe_transport_error(e, body_bytes, self.timeout_s) from e
+                log.warning("minimax_m31_flash: streaming path failed (%s: %s); "
+                            "falling back to buffered POST",
+                            type(e).__name__, e)
+                # The fallback must NOT ask for a stream. `body` still carries
+                # stream=True from _build_body, and the endpoint HONOURS it: the
+                # "buffered" retry came back as text/event-stream, so r.json()
+                # raised "JSONDecodeError: Expecting value: line 1 column 1
+                # (char 0)" and the turn died instead of degrading. Strip the
+                # flag for the fallback only -- the SSE path above still wants
+                # it (2026-10-29, a production install).
+                buffered_body = {k: v for k, v in body.items() if k != "stream"}
+                return self._complete_buffered(url, headers, buffered_body, tools)
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         return self._parse_anthropic_message(data, tools, latency_ms)
@@ -446,9 +553,25 @@ class LLM(BaseLLM):
 
                 elif et == "error":
                     err = ev.get("error") or {}
+                    etype = str(err.get("type") or "")
+                    emsg = str(err.get("message") or "")
+                    if _is_transient_provider_error(etype, emsg):
+                        # A 5xx delivered INSIDE a 200 response. The HTTP
+                        # status says 200, so the retry ladder in
+                        # base._post_with_retry cannot see it -- this is the
+                        # only place the failure is recognisable.
+                        m = re.search(r"\((\d{3})\)", emsg)
+                        raise TransientProviderError(
+                            f"minimax_m31_flash: transient provider error "
+                            f"({etype}: {emsg})",
+                            user_message=(
+                                "MiniMax returned a transient error while "
+                                f"answering ({etype}: {emsg})."),
+                            status=int(m.group(1)) if m else None,
+                        )
                     raise RuntimeError(
                         f"minimax_m31_flash stream error: "
-                        f"{err.get('type')}: {err.get('message')}")
+                        f"{etype}: {emsg}")
 
                 elif et == "message_stop":
                     continue

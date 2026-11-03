@@ -275,6 +275,14 @@ class _Llm:
     # still overrides this at runtime, so a rollback does not need an
     # edit to the config file.
     streaming: bool = True
+    # Transient provider errors -- a 5xx delivered INSIDE a 200 response,
+    # an overload, a rate limit -- are retried. The provider says "please
+    # retry" and the harness believed it (2026-11-04: a production turn
+    # died at iteration 63 on exactly that message). 0 attempts restores
+    # the old behaviour of failing on the first error.
+    transient_retry_attempts: int = 2
+    # First retry delay in seconds; each further retry doubles it.
+    transient_retry_backoff_s: float = 3.0
 
 
 @dataclass(frozen=True)
@@ -358,6 +366,10 @@ def _make_llm(d: dict) -> _Llm:
         # SSE streaming. Optional in the config: a per_agent block that
         # omits it gets the default (on).
         streaming=bool(d.get("streaming", True)),
+        # Transient provider errors (a 5xx inside a 200 response). Optional:
+        # a config that predates them gets the defaults.
+        transient_retry_attempts=int(d.get("transient_retry_attempts", 2)),
+        transient_retry_backoff_s=float(d.get("transient_retry_backoff_s", 3.0)),
     )
 
 

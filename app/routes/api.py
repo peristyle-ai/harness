@@ -26,6 +26,7 @@ bp = Blueprint("api", __name__, url_prefix="/api/v1")
 
 from app.auth import login_required_json, current_user  # noqa: E402
 from app.agent import turn_guard  # noqa: E402
+from app.agent.llm.base import user_facing_error  # noqa: E402
 from app.paths import LOG_DIR
 from app.routes.agent_lookup import canonicalise_agent_name, resolve_agent  # noqa: E402
 
@@ -1354,7 +1355,7 @@ def entity_chat(name: str):
                         continue
                     if kind == "error":
                         log.exception("entity_chat streaming failed: %s", payload)
-                        yield _json.dumps({"type": "error", "message": f"{type(payload).__name__}: {payload}"}) + "\n"
+                        yield _json.dumps({"type": "error", "message": user_facing_error(payload)}) + "\n"
                         break
                     event = payload
                     if isinstance(event, dict):

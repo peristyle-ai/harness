@@ -43,6 +43,55 @@ class ContextWindowExceeded(RuntimeError):
         self.detail = detail
 
 
+class TransientProviderError(RuntimeError):
+    """The provider failed in a way that the SAME request may survive.
+
+    A 5xx, an overload, a rate limit, a dropped connection -- the request
+    was not wrong, the upstream was unwell. Repeating it can work.
+
+    This is deliberately distinct from a permanent failure (a 400 bad
+    request, a context window that is full, a rejected API key): repeating
+    those just burns the same wall-clock twice.
+
+    2026-11-04 (production, harness2 / the Durthu install): MiniMax
+    answered a request INSIDE a 200 response with an SSE "error" event:
+
+        {"type":"error","error":{"type":"api_error",
+         "message":"Internal server error. Please retry your request. (500)"}}
+
+    The provider said "please retry" and the harness took it as final --
+    because the attempt had already streamed some text, and a retry would
+    have shown the user that text twice. The turn died at iteration 63
+    with 122 tool calls done. The HTTP-level retry ladder never saw this
+    failure at all: the status was 200.
+    """
+
+    def __init__(self, message: str, *, user_message: str | None = None,
+                 status: int | None = None) -> None:
+        super().__init__(message)
+        # What the USER reads. The loop adds the salvage hint on top.
+        self.user_message = user_message or message
+        self.status = status
+
+
+def user_facing_error(e: BaseException) -> str:
+    """The message a user reads when a turn dies.
+
+    A provider failure carries a sentence written for a human, not a
+    Python repr. Everything else keeps the historical "Type: message"
+    form, because that is what the logs and the bug reports are written
+    against.
+    """
+    friendly = getattr(e, "user_message", None)
+    base = str(friendly) if friendly else f"{type(e).__name__}: {e}"
+    if isinstance(e, TransientProviderError):
+        base += (
+            " Nothing from this turn was lost -- send another message and "
+            "the agent picks up from where it stopped."
+        )
+    return base
+
+
 @dataclass
 class Message:
     """One message in the conversation stream.
