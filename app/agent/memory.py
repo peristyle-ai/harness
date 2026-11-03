@@ -23,6 +23,8 @@ from uuid import UUID, uuid4
 import psycopg
 from psycopg_pool import ConnectionPool
 
+from .text import nul_safe, nul_safe_deep
+
 from app.agent.names import canonical_agent_name
 
 log = logging.getLogger(__name__)
@@ -514,9 +516,14 @@ class MemoryAPI:
         exactly one assistant turn instead of two. Also used by the
         client-error endpoint to keep a single row per failure.
         """
+        # Postgres refuses NULs in text AND in jsonb, so the content and
+        # every JSON payload are made safe BEFORE they are serialised: a
+        # NUL inside a JSON string is legal JSON and still rejected by
+        # Postgres, so sanitising after json.dumps would be too late.
+        content = nul_safe(content)
         tok = len(content.split())
-        att_json = json.dumps(attachments or [])
-        traj_json = json.dumps(trajectory) if trajectory is not None else None
+        att_json = json.dumps(nul_safe_deep(attachments or []))
+        traj_json = json.dumps(nul_safe_deep(trajectory)) if trajectory is not None else None
         with self.pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -566,12 +573,17 @@ class MemoryAPI:
         attachments: list[dict] | None = None,
         trajectory: dict | None = None,
     ) -> Turn:
+        # Postgres refuses NULs in text AND in jsonb, so the content and
+        # every JSON payload are made safe BEFORE they are serialised: a
+        # NUL inside a JSON string is legal JSON and still rejected by
+        # Postgres, so sanitising after json.dumps would be too late.
+        content = nul_safe(content)
         tok = len(content.split())
-        att_json = json.dumps(attachments or [])
+        att_json = json.dumps(nul_safe_deep(attachments or []))
         # Trajectory is dict | None; psycopg will write None as SQL
         # NULL and dict as JSONB. JSON-serialise to be defensive
         # against types psycopg can't auto-adapt.
-        traj_json = json.dumps(trajectory) if trajectory is not None else None
+        traj_json = json.dumps(nul_safe_deep(trajectory)) if trajectory is not None else None
         with self.pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -682,8 +694,9 @@ class MemoryAPI:
         with self.pool.connection() as conn:
             with conn.cursor() as cur:
                 for turn in (user_turn, assistant_turn):
-                    chunks = _chunker(turn.content, self.config.memory.chunk)
+                    chunks = _chunker(nul_safe(turn.content), self.config.memory.chunk)
                     for idx, chunk_text in enumerate(chunks):
+                        chunk_text = nul_safe(chunk_text)
                         mhash = hashlib.sha256(_norm_text(chunk_text).encode("utf-8")).hexdigest()
                         # Dedupe: skip if same hash already exists in this conv.
                         cur.execute(
@@ -752,7 +765,7 @@ class MemoryAPI:
         if not (0 <= importance <= 10):
             raise ValueError(f"importance must be 0-10, got {importance}")
 
-        text = text.strip()
+        text = nul_safe(text.strip())
         mhash = hashlib.sha256(_norm_text(text).encode("utf-8")).hexdigest()
         now = datetime.now()
 
@@ -887,7 +900,7 @@ class MemoryAPI:
         if created_by not in ("operator", "agent", "import"):
             raise ValueError(f"invalid created_by: {created_by!r}")
 
-        text = text.strip()
+        text = nul_safe(text.strip())
         mhash = hashlib.sha256(_norm_text(text).encode("utf-8")).hexdigest()
         now = datetime.now()
         effective_created_at = created_at or now
@@ -906,7 +919,7 @@ class MemoryAPI:
 
                 # Embed the FULL content (memory-level similarity).
                 emb = self.embedding.embed(text)
-                meta_json = json.dumps(metadata or {})
+                meta_json = json.dumps(nul_safe_deep(metadata or {}))
 
                 cur.execute(
                     f"""
@@ -1057,7 +1070,7 @@ class MemoryAPI:
         """
         if not new_content or not new_content.strip():
             raise ValueError("new_content must be non-empty")
-        new_content = new_content.strip()
+        new_content = nul_safe(new_content.strip())
         new_mhash = hashlib.sha256(_norm_text(new_content).encode("utf-8")).hexdigest()
         now = datetime.now()
         new_emb = self.embedding.embed(new_content)
@@ -2120,7 +2133,7 @@ class MemoryAPI:
     def set_conversation_title(self, conversation_id: UUID, title: str) -> None:
         """Set the conversation title (auto-derived from first user msg)."""
         # Truncate to 200 chars; the schema column is text (no length cap).
-        title = (title or "").strip()[:200]
+        title = nul_safe((title or "").strip()[:200])
         with self.pool.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(

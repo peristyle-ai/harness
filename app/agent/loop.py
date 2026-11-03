@@ -48,6 +48,7 @@ def _operator_mode_enabled(config) -> bool:
 
 from . import turn_guard
 from .context_window import ContextWindow
+from .text import nul_safe
 
 
 # Soft-error nudge for the "model narrated a tool call in prose"
@@ -1950,12 +1951,12 @@ class AgentLoop:
                     retrieved_ids=retrieved_ids,
                     request_id=request_id,
                     embed=False,
-                    error_message=f"{type(e).__name__}: {e}",
+                    error_message=nul_safe(f"{type(e).__name__}: {e}"),
                 )
                 assistant_turn_persisted = True
             except Exception as pe:
                 log.exception("failed to persist the failed turn: %s", pe)
-            yield {"type": "error", "message": f"{type(e).__name__}: {e}"}
+            yield {"type": "error", "message": nul_safe(f"{type(e).__name__}: {e}")}
         finally:
             # Phase 16.5 (2026-10-20): persist partial assistant turn on
             # client disconnect (GeneratorExit raised at any yield point).

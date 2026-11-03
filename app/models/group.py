@@ -29,6 +29,7 @@ from datetime import datetime
 from typing import Any, Iterable
 
 from app.agent.names import canonical_agent_name
+from app.agent.text import nul_safe, nul_safe_deep
 
 log = logging.getLogger(__name__)
 
@@ -398,8 +399,10 @@ class GroupStore:
                         author_type,
                         author_id,
                         author_name or "",
-                        content,
-                        json.dumps(attachments or []),
+                        # Postgres refuses NULs in text and jsonb, and a
+                        # group message can carry anything a tool printed.
+                        nul_safe(content),
+                        json.dumps(nul_safe_deep(attachments or [])),
                         list(mentions or []),
                     ),
                 )

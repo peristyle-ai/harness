@@ -38,6 +38,8 @@ import os
 import re
 import signal
 import subprocess
+
+from ..text import nul_safe
 import threading
 import time
 from pathlib import Path
@@ -353,6 +355,13 @@ async def run(args: dict, ctx) -> dict:
                 env=env,
                 capture_output=True,
                 text=True,
+                # A tool that reads a binary file (an ELF header, a .pyc,
+                # a core dump) must not kill the turn. text=True decodes
+                # strictly, so invalid bytes raise UnicodeDecodeError
+                # before the tool can return anything at all; "replace"
+                # turns them into U+FFFD instead. A NUL is valid UTF-8 and
+                # survives any decode, so it is handled below.
+                errors="replace",
                 timeout=timeout_s,
             )
 
@@ -388,8 +397,8 @@ async def run(args: dict, ctx) -> dict:
         return {"ok": False, "error": msg}
 
     # 4. Truncate output
-    out = proc.stdout or ""
-    err = proc.stderr or ""
+    out = nul_safe(proc.stdout or "")
+    err = nul_safe(proc.stderr or "")
     out_truncated = False
     err_truncated = False
     if len(out) > MAX_OUTPUT_BYTES:
