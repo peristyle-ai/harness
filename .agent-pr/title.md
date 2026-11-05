@@ -1,1 +1,1 @@
-fix(llm): a transient provider error must not kill the turn
+fix(safety): the setuid guard must refuse the privileged modes, and only those

@@ -1,66 +1,99 @@
-## What happened
+The guard that refuses `setuid` also refused `600`.
 
-A production turn on harness2 (the Durthu / Drycha install) died at
-iteration 63, with 122 tool calls done, and the user saw:
+The pattern was
 
-```
-⚠️ RuntimeError: minimax_m31_flash stream error: api_error: Internal
-server error. Please retry your request. (500)
-```
+    \bchmod\s+[0-7]*[4-7][0-7][0-7]\b
 
-The provider said "Please retry your request". The harness did not
-retry.
+and it was meant to catch the setuid bit. It did not, in either
+direction.
 
-## Why
+**It refused the ordinary modes.** In a three-digit mode the leading
+digit is the owner's read, write and execute bits -- it carries no
+privilege at all. But the pattern matched any three-digit mode whose
+leading digit fell in 4-7, so the everyday modes `644`, `600`, `700`,
+`755`, `664`, `400` and `500` were all blocked and reported as
+"setuid". Setting a config file to mode `600` is one of the most
+ordinary things an agent does, and it was refused.
 
-MiniMax delivered the 500 **inside a 200 response**, as an SSE `error`
-event:
+**And it let the privileged ones through.** `4000` and `2000` are setuid
+and setgid with no other bits, and neither matched.
 
-```json
-{"type":"error","error":{"type":"api_error",
- "message":"Internal server error. Please retry your request. (500)"}}
-```
+A guard that refuses the ordinary command is not a guard, it is an
+outage: the agent gets an error that reads like a security decision,
+and the natural response is to find a way around the guard rather than
+to report it.
 
-The HTTP status was 200, so the retry ladder in
-`base._post_with_retry` -- which keys off the status code -- never saw
-it. The adapter's only recovery for a failed stream was "fall back to a
-buffered POST", and that fallback was skipped whenever the attempt had
-already streamed some text, because the fallback would have duplicated
-it.
+## What changes
 
-So the failure landed in the one case with no recovery at all: text
-already shown. The same 500 hit the other install on 2026-11-03 and
-RECOVERED -- purely because that attempt had streamed nothing yet.
+The privilege bits can only be expressed in the **four-digit** form,
+where the leading digit is the special-bits octal digit -- `4` setuid,
+`2` setgid, `1` sticky. So:
 
-## What this changes
+- a four-digit mode whose leading digit carries setuid or setgid is
+  refused -- `2`, `3`, `4`, `5`, `6` or `7`, which is every leading
+  digit except `0` (no special bits at all) and `1` (sticky alone);
+- every three-digit mode is allowed, including the leading-zero forms;
+- the sticky bit is **not** matched.
 
-- A new typed error, `TransientProviderError`, for a provider failure
-  the same request may survive (a 5xx, an overload, a rate limit).
-- The SSE `error` event is classified. Transient failures are retried;
-  permanent ones (a bad request, a context window that is full) are
-  not -- repeating those changes nothing.
-- **With nothing shown yet**: the buffered POST, as before. It retries
-  5xx at the HTTP level, where the status code is visible.
-- **With text already shown**: the request is repeated, and the
-  retry's text is suppressed. The client already saw the first
-  attempt's text, and a retry answers differently (temperature 0.7),
-  so the authoritative text arrives with the iteration's `iter_text`
-  event instead -- the answer is never shown twice.
-- The chat bubble reads a sentence, not a Python repr: "MiniMax
-  returned a transient error while answering ...". It says the turn was
-  not lost.
+On sticky: it takes rights *away* rather than granting them -- it is
+what stops one user deleting another user's file in a shared directory
+-- and the symbolic rule immediately above already allows the sticky
+form for the same reason. If the project would rather refuse sticky
+as well, that is one character in the pattern and one line in the test.
 
-`llm.transient_retry_attempts` (default 2) and
-`llm.transient_retry_backoff_s` (default 3.0) control the ladder.
-Setting attempts to 0 restores the old behaviour.
+The symbolic rule (`u+s`), the `777` rule and the recursive-`chmod`
+soft-flag are untouched.
+
+## A short mode is not a special-bits mode
+
+An earlier draft of this change also refused the **short** forms `2`,
+`4` and `6`, on the theory that they set setuid or setgid on their
+own. They do not, and that rule was removed.
+
+A mode of one or two digits is read as the *trailing* digits with
+leading zeros, so `chmod 4 file` means `0004` -- the owner may read
+the file -- and not `4000`. The special-bits digit only comes into
+existence in the four-digit form. This was measured, not assumed:
+
+| command | resulting mode | setuid/setgid? |
+|---|---|---|
+| `chmod 2 f` | `2` | no |
+| `chmod 4 f` | `4` | no |
+| `chmod 6 f` | `6` | no |
+| `chmod 2000 f` | `2000` | setgid |
+| `chmod 4000 f` | `4000` | setuid |
+
+Measured on GNU coreutils and, independently, on busybox. The same
+table is why the old pattern's refusal of the short forms was not
+noticed for so long: it never refused them, and the new rule would
+have started to -- for no security gain, and at the cost of refusing
+three ordinary modes.
 
 ## Tests
 
-`tests/test_minimax_transient_retry.py` -- 10 offline tests: the
-production case, no duplication of the answer, the buffered path when
-nothing was shown, giving up when the provider stays down, a permanent
-error not being retried, the context-window mapping surviving the
-fallback, a caller with no live deltas keeping its old behaviour, and
-the message the user reads.
+`tests/test_chmod_mode_scope.py` -- 33 cases:
 
-Full suite: 433 passed, 16 skipped.
+- the privileged modes stay refused (the four-digit setuid, setgid and
+  both-together forms, including `4000` and `2000` with no other bits);
+- the everyday modes are allowed, including `0600`, `0700` and `0755`;
+- the short modes `2`, `4` and `6` are allowed, because a short mode
+  carries no privilege bit;
+- the sticky forms are allowed;
+- the symbolic `u+s` form stays refused.
+
+The file fails 18 of its cases against the old pattern and passes all
+of them against the new one, so it can actually fail.
+
+The rest of the suite is unchanged: the same tests pass before and
+after this change (433 passed / 16 skipped before, 466 passed / 16
+skipped after).
+
+## For the reviewer
+
+The change is generic and names no install.
+
+One note for whoever looks at this next: the guard matches a command
+*string*, so it is a classifier and not a sandbox. `chmod --reference`
+and a `cp` that preserves modes can still carry a setuid bit onto a
+file without the four-digit form ever appearing in the command. That
+is a separate concern from this fix and is not addressed here.

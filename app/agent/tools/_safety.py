@@ -245,8 +245,44 @@ _HARD_BLOCK_PATTERNS: list[tuple[_re.Pattern[str], str]] = [
     # System paths that would be a privilege-escalation concern.
     (_re.compile(r"(^|\s)/etc/(passwd|shadow|sudoers|shadow\.)"), "/etc/{passwd,shadow,sudoers} not allowed"),
     (_re.compile(r"(^|\s)/etc/systemd/system/"), "modifying /etc/systemd/system/* not allowed"),
-    # Privilege elevation via setuid bits.
-    (_re.compile(r"\bchmod\s+[0-7]*[4-7][0-7][0-7]\b"), "chmod with setuid/setgid bits not allowed"),
+    # Privilege elevation via the setuid and setgid bits.
+    #
+    # The pattern that used to live here was
+    #   \bchmod\s+[0-7]*[4-7][0-7][0-7]\b
+    # and it was meant to catch the setuid bit.  It did not.
+    #
+    # In a THREE-digit mode the leading digit is the owner's read, write
+    # and execute bits, and it carries no privilege at all -- so the
+    # pattern matched every everyday mode whose leading digit happened
+    # to fall in 4-7 and refused them all as "setuid".  The ordinary
+    # modes 644, 600, 700, 755, 664, 400 and 500 were all blocked.
+    # Setting a file to mode 600 is one of the most ordinary things an
+    # agent does, and it was refused.
+    #
+    # It also let the genuinely privileged forms THROUGH: 4000 and 2000
+    # are setuid and setgid with no other bits, and neither matched.
+    #
+    # A mode that carries a privilege bit has to SAY SO, and it can only
+    # say so in the FOUR-digit form -- SXYZ, where the leading S is the
+    # special-bits octal digit (4 setuid, 2 setgid, 1 sticky).  So the
+    # rule fires on a four-digit mode whose leading digit carries setuid
+    # or setgid -- 2, 3, 4, 5, 6 or 7, which is every leading digit
+    # except 0 (no special bits at all) and 1 (sticky only).
+    #
+    # There is deliberately NO rule for a SHORT mode.  A mode of one or
+    # two digits is read as the TRAILING digits with leading zeros, so
+    # `chmod 4 file` is 0004 -- the owner may read the file -- and not
+    # 4000.  The special-bits digit only exists in the four-digit form,
+    # so a short mode can never carry setuid or setgid and refusing it
+    # would refuse an ordinary command.  (Measured on GNU coreutils and
+    # on busybox: `chmod 2`, `chmod 4` and `chmod 6` all yield modes 2,
+    # 4 and 6 with no special bits set.)
+    #
+    # The sticky bit is deliberately NOT matched.  It takes rights away
+    # rather than granting them -- it is what stops one user deleting
+    # another user's file in a shared directory -- and the symbolic rule
+    # below already allows the sticky form for the same reason.
+    (_re.compile(r"\bchmod\s+[234567][0-7]{3}\b"), "chmod with setuid/setgid bits not allowed"),
     # The SYMBOLIC form was not covered: `chmod u+s file` slipped through
     # while `chmod 4755 file` was blocked. Found by the operator-mode
     # test (2026-10-29). The mode token is the run of mode characters
