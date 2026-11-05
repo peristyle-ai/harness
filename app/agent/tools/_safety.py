@@ -267,15 +267,22 @@ _HARD_BLOCK_PATTERNS: list[tuple[_re.Pattern[str], str]] = [
     # special-bits octal digit (4 setuid, 2 setgid, 1 sticky).  So the
     # rule fires on a four-digit mode whose leading digit carries setuid
     # or setgid -- 2, 3, 4, 5, 6 or 7, which is every leading digit
-    # except 0 (no special bits at all) and 1 (sticky only) -- and on
-    # the short forms that set those bits on their own: 2, 4 and 6.
+    # except 0 (no special bits at all) and 1 (sticky only).
+    #
+    # There is deliberately NO rule for a SHORT mode.  A mode of one or
+    # two digits is read as the TRAILING digits with leading zeros, so
+    # `chmod 4 file` is 0004 -- the owner may read the file -- and not
+    # 4000.  The special-bits digit only exists in the four-digit form,
+    # so a short mode can never carry setuid or setgid and refusing it
+    # would refuse an ordinary command.  (Measured on GNU coreutils and
+    # on busybox: `chmod 2`, `chmod 4` and `chmod 6` all yield modes 2,
+    # 4 and 6 with no special bits set.)
     #
     # The sticky bit is deliberately NOT matched.  It takes rights away
     # rather than granting them -- it is what stops one user deleting
     # another user's file in a shared directory -- and the symbolic rule
     # below already allows the sticky form for the same reason.
     (_re.compile(r"\bchmod\s+[234567][0-7]{3}\b"), "chmod with setuid/setgid bits not allowed"),
-    (_re.compile(r"\bchmod\s+[246]\b"), "chmod with setuid/setgid bits not allowed"),
     # The SYMBOLIC form was not covered: `chmod u+s file` slipped through
     # while `chmod 4755 file` was blocked. Found by the operator-mode
     # test (2026-10-29). The mode token is the run of mode characters
